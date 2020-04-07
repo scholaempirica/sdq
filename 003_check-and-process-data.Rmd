@@ -1,0 +1,539 @@
+---
+title: "Validate and *filter* out bad cases"
+output: 
+  html_notebook: 
+    toc: yes
+    fig_caption: yes
+    number_sections: yes
+---
+
+I am trying to use R Notebook instead of standard R Markdown. It may be more readable than a raw R Script and more flexible than typical R Markdown.
+
+Citing from default text of R Notebook:
+
+> When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).  
+> The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+# Reading from pre-processed RDS
+
+First, solve conflict problem. Package `conflicted` from *tidyverse* does the job nice and clean.
+
+```{r}
+library(conflicted)
+conflict_prefer("here", "here")
+conflict_prefer("filter", "dplyr")
+```
+
+See `002_read-date.R` for details. Using `here` package already loaded before, we can simply locate our files. Just type `here("")` and (with the cursor right in between the quotation marks) press Tab for obtaining nice list of available files. No need to type and get typos...
+
+```{r}
+library(here)
+library(tidyverse)
+library(reschola)
+library(magrittr)
+
+dfm <- read_rds(here("data-intermediate/waves_1-7.rds"))
+dfm %>% nrow
+
+```
+
+# Validating
+## With `assertr`
+
+`assetr` is especially useful when you know something is impossible and should not run without any warning nor let be unnoticed. For details, see the [vignette](https://cran.r-project.org/web/packages/assertr/vignettes/assertr.html) and [functions reference](https://docs.ropensci.org/assertr/reference/).
+
+Basic functions with examples from `mtcars`:
+
+* `verify(mpg > 0)` -- for simple check if specified variable is positive number
+* `assert(within_bounds(0, 100), mpg)` -- check if `mpg` variable is within specified bounds, it is easy to select more variables with `dplyr`-like manner, so you can select all variables *except* `mpg` with `-mpg` (difference between verify and assert is that verify takes an expression, and assert takes a predicate and columns to apply it to^[This might make the `verify` function look more elegant–but there’s an important drawback. `verify` has to evaluate the entire expression first, and then check if there were any violations. Because of this, `verify` can’t tell you the offending datum.
+One important drawback to `assert`, and a consequence of its application of the predicate to columns, is that `assert` can’t confirm assertions about the data structure itself.]); the built-in predicates are `not_na`, `within_bounds`, `in_set`, and `is_uniq`
+* `insist(within_n_mads(3), mpg)` -- when we are validating against unknown value that needs to be computed first column-by-column; in this particular example MADS is used instead of SD, because of outliers could make SD useless 
+* `insist_rows(maha_dist, within_n_mads(3), everything())` -- row-wise approach, e.g. for identifying outliers based on Mahalanobis' distance
+* `assert_rows(num_row_NAs, within_bounds(0, 2)` -- row-wise `assert` approach, identifying cases with 0-2 NAs (in the example)
+
+These functions can be "pipelined". Success and error evaluations can be modified (see `help("success_and_error_functions")`).
+
+```{r}
+library(assertr)
+
+gender_check <- dfm %>%
+  assert(
+    in_set("boys", "girls"),
+    gender_girl,
+    success_fun = success_logical,
+    error_fun = error_df_return
+  )
+gender_check
+
+months_check <- dfm %>%
+  assert(
+    within_bounds(1, 12),
+    fill_in_month,
+    born_month,
+    success_fun = success_logical,
+    error_fun = error_df_return
+  )
+months_check
+
+years_check <- dfm %>%
+  insist(
+    within_n_mads(3),
+    fill_in_year,
+    born_year,
+    success_fun = success_logical,
+    error_fun = error_df_return
+  )
+years_check
+```
+Apparently, we have plenty of NAs in `gender_girl`, one typo in year and one test subject (by ID...). We can repair the first and exclude the second.
+
+```{r}
+# repair nonsensical value with the most likely value
+# and filter the test subject with slice function (note the - sign!)
+dfm %<>%
+  slice(-(years_check %>% filter(column == "born_year") %>% pull(index))) %>% 
+  mutate(fill_in_year = ifelse(fill_in_year == 2108, 2018, fill_in_year))
+dfm %>% nrow
+
+# check if solved
+dfm %>% insist(
+  within_n_mads(3),
+  fill_in_year,
+  born_year,
+  success_fun = success_logical,
+  error_fun = error_df_return
+)
+```
+
+## Auxiliary variables
+
+Make `born` and `fill_in_date` vars, returning NA when any original parts is NA.
+
+```{r}
+library(lubridate)
+
+dfm %<>% mutate(born = ymd(if_else(
+  is.na(born_year) | is.na(born_month), NA_character_,
+  paste(born_year, born_month, "1", sep = "-")
+)),
+fill_in_date = ymd(if_else(
+  is.na(fill_in_year) | is.na(fill_in_month), NA_character_,
+  paste(fill_in_year, fill_in_month, "1", sep = "-")
+)))
+dfm %>% nrow
+
+```
+
+Rank measurements by `fill_in_date`, only for IDs having complete dates filled in.
+
+```{r}
+library(naniar)
+
+wave_rank <- dfm %>% 
+  group_by(id_pupil) %>%
+  filter(!any_na(fill_in_date)) %>% # exclude any NA in fill_in_date
+  mutate(wave_rank = dense_rank(fill_in_date)) %>%
+  ungroup %>%
+  select(rowid, wave_rank)
+
+# merge back to original dataset
+dfm %<>% left_join(wave_rank)
+
+dfm %>% nrow
+
+```
+
+
+
+## Custom
+
+However, to my knowledge and for our purposes, `assertr` nor any other "validating" package can spot IDs changing gender, birthday nor messed-up IDs referring to multiple subjects. Thus, there is a need to write proprietary functions as follows.
+
+```{r}
+spot_weirdos <- function(df, id, var, type) {
+  id <- enquo(id)
+  var <- enquo(var)
+  
+  if (type %in% c("unique", "u")) {
+    df %>%
+      group_by(!!id) %>%
+      summarise(n = n_distinct(!!var, na.rm = T)) %>%
+      filter(n > 1) %>%
+      pull(!!id) %>%
+      unique
+  } else if (type %in% c("nonrepeating", "nr")) {
+    df %>%
+      filter(!is.na(!!var)) %>%
+      count(!!id, !!var) %>%
+      filter(n > 1) %>%
+      pull(!!id) %>%
+      unique
+  }
+}
+```
+
+Function `spot_weirdo(dataframe, id variable, variable of interest, type of variable)` returns IDs of so-called "weirdos", i.e. IDs with weird variable. This weirdness can be of two type -- variable is expected to:
+
+1. be unique within ID (e.g. gender) -- i.e. `type = "unique"` or `type = "u"`
+2. having one value only once (e.g. measurement number) -- i.e. `type = "nonrepeating"` or `type = "nr"`
+
+You need to specify the ID variable, the variable "weirdos" is meant to be spotted on, and the type of weirdness. Feel free to use it in a pipeline. Note that NAs (**not explicit NAs** by `forcats`) are completely ignored. Please avoid using explicit NAs, as `n_distinct` function does not consider them as "proper" NAs.
+
+```{r}
+nuniq_born <- dfm %>% spot_weirdos(id_pupil, born, "u")
+nuniq_gender <- dfm %>% spot_weirdos(id_pupil, gender_girl, "u")
+nuniq_wave_ind <- dfm %>% spot_weirdos(id_pupil, wave_ind, "nr")
+nuniq_wave_rank <- dfm %>% spot_weirdos(id_pupil, wave_rank, "nr")
+```
+
+## Duplicates
+
+Moreover, it is useful to check whether the dataset does contain any duplicates. We are lenient to typos and are considering only the most crucial variables. REGEX refers to all SDQ items (begins with "t" and does not include any "_").
+
+```{r}
+distinct_rowids <- dfm %>%
+  distinct_at(vars(id_pupil, gender_girl, born, wave, matches("^t[^_]+$")), .keep_all = T) %>%
+  pull(rowid)
+
+duplicates <- dfm %>% filter(!rowid %in% distinct_rowids) %>% pull(id_pupil) %>% unique
+```
+
+## Conclusion
+
+Let's have a look at the problem (and the scale of it). First, make new variable indicating any problem with ID.
+
+```{r}
+dfm %<>% mutate(
+  invalid_wave_ind = if_else(id_pupil %in% nuniq_wave_ind, TRUE, FALSE),
+  invalid_gender = if_else(id_pupil %in% nuniq_gender, TRUE, FALSE),
+  invalid_born = if_else(id_pupil %in% nuniq_born, TRUE, FALSE),
+  invalid_wave_rank = if_else(id_pupil %in% nuniq_wave_rank, TRUE, FALSE),
+  invalid_duplicate = if_else(id_pupil %in% duplicates, TRUE, FALSE)
+)
+```
+
+How many invalid IDs do we have, total?
+
+```{r}
+dfm %>% count(
+  invalid_wave_ind,
+  invalid_gender,
+  invalid_born,
+  invalid_wave_rank,
+  invalid_duplicate
+)
+
+# dfm %>% filter(invalid_id == TRUE) %>% pull(id_pupil) %>% n_distinct()
+```
+
+Cleaning impact by **WAVE_IND** (measurement)
+
+```{r}
+dfm %>% filter(invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE) %>%
+  count(wave_ind) %>%
+  left_join(dfm %>% count(wave_ind), ., by = "wave_ind") %>%
+  mutate(diff = n.x - n.y, "% lost" = ((1 - (n.y / n.x)) * 100)) %>%
+  rename("# raw" = 2,
+         "# cleaned" = 3,
+         "# lost" = 4)
+```
+
+Cleaning impact impact by **WAVE**
+
+```{r}
+dfm %>% filter(invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE) %>% count(wave) %>%
+  left_join(dfm %>% count(wave), ., by = "wave") %>%
+  mutate(diff = n.x - n.y, "% lost" = ((1 - (n.y / n.x)) * 100)) %>%
+  rename("# raw" = 2,
+         "# cleaned" = 3,
+         "# lost" = 4) 
+```
+
+### Cases with nonconsecutive measurment
+
+It may be useful to see how many IDs diverge from expected measurement (`wave_ind`) sequence. Note that this is intentional -- when someone skips the wave, so does his or her `wave_ind`.
+
+```{r}
+noncosecutives <- dfm %>%
+  group_by(id_pupil) %>%
+  mutate(
+    wave_ind_presumed = seq(1, max(wave_ind, na.rm = T)) %>% str_flatten,
+    wave_ind_actual = sort(wave_ind) %>% str_flatten,
+    by_date = sort(wave_rank) %>% str_flatten()
+  ) %>% filter(wave_ind_actual != wave_ind_presumed) %>%
+  ungroup()
+```
+
+Counts of nonconsecutive cases by their "validity status"
+
+```{r}
+noncosecutives %>% count(invalid = invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE)
+```
+
+Example:
+
+```{r}
+noncosecutives %>% select(id_pupil, wave_ind_presumed, wave_ind_actual) %>% sample_n(6)
+```
+
+### Filtering
+
+For now on, we work with clean dataset only. It could be changed via editing of this filter:
+
+```{r}
+dfm %<>% filter(invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE)
+```
+
+## Auxiliary variable after filtering
+
+Age and age at the first measurement variables can be derived in straightforward way only after main filtering.
+
+Age at measurement and age at first measurement
+
+```{r}
+# get time interval in years
+dfm %<>% mutate(age = interval(born, fill_in_date) %>% as.numeric('years'))
+dfm %>% nrow
+
+# get cases with known birthday; only one value per ID
+birthdays <-
+  dfm %>% drop_na(born) %>% distinct_at(vars(id_pupil, born))
+
+# get fill in date of the first measurement; NAs are dropped
+fill_in_date_fst_measur <-
+  dfm %>% drop_na(fill_in_date) %>%
+  filter(wave_ind == 1) %>%
+  select(id_pupil, fill_in_date)
+
+born_age <-
+  left_join(birthdays, fill_in_date_fst_measur) %>%
+  na.omit %>%
+  mutate(age_fst_measur = interval(born, fill_in_date) %>%
+           as.numeric('years')) %>%
+  select(id_pupil, age_fst_measur)
+
+dfm %<>% left_join(born_age, by = "id_pupil")
+```
+
+
+## Descriptive visualizations / statistics
+
+Quick overview:
+
+```{r, fig.width = 15}
+library(visdat)
+
+vis_dat(dfm) # visualize types of variables
+```
+
+Intervention by birthday:
+
+```{r}
+dfm %>% count(missing_birthday = is.na(born), intervention = is_intervention2) %>%
+  ggplot(aes(x = intervention, y = n, fill = missing_birthday)) +
+  geom_bar(position = "fill", stat = "identity")
+
+dfm %>% ggplot(aes(born, col = is_intervention2)) + geom_density()
+
+dfm %>% ggplot(aes(born, is_intervention2)) + geom_boxplot()
+```
+Gender
+
+```{r}
+dfm %>% count(missing_gender = is.na(gender_girl), intervention = is_intervention2) %>%
+  ggplot(aes(x = intervention, y = n, fill = missing_gender)) +
+  geom_bar(position = "fill", stat = "identity")
+
+dfm %>% count(gender = gender_girl, intervention = is_intervention2) %>%
+  ggplot(aes(x = intervention, y = n, fill = gender)) +
+  geom_bar(position = "fill", stat = "identity") 
+```
+
+Age, intervention and SDQ
+
+```{r}
+dfm %>%
+  drop_na(gender_girl) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(age, value, col = gender_girl)) +
+  geom_jitter(alpha = .1) +
+  geom_smooth() +
+  facet_grid(is_intervention2 ~ name)
+```
+
+SDQ dimensions distributions by gender
+
+> A skew no one can undo...
+
+First measurement only:
+```{r}
+dfm %>% filter(wave_ind == 1) %>% 
+  drop_na(gender_girl) %>%
+  select(id_pupil, gender_girl, is_intervention2, contains("10")) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(value, fill = gender_girl)) +
+  geom_bar(position = "dodge2") +
+  facet_wrap(~ name)
+```
+
+Second measurement only:
+```{r}
+dfm %>% filter(wave_ind == 2) %>% 
+  drop_na(gender_girl) %>%
+  select(id_pupil, gender_girl, is_intervention2, contains("10")) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(value, fill = gender_girl)) +
+  geom_bar(position = "dodge2") +
+  facet_wrap(~ name)
+```
+
+# Item Response Theory approach
+
+First, prepare and order the items.
+
+```{r}
+item_names <- c(
+# emotion
+"tsomatic", "tworries", "tunhappy", "tclingy", "tafraid",
+
+# conduct
+"ttantrum", "uobeys", "tfights", "tlies", "tsteals",
+
+# hyperactivity symptoms - externalizing
+"trestles", "tfidgety", "tdistrac", "ureflect", "uattends",
+
+# relations to peers symptoms - internalizing
+"tloner", "ufriend", "upopular", "tbullied", "toldbest",
+
+# pro-social symptoms
+"tconsid", "tshares", "tcaring", "tkind", "thelpout"
+)
+
+# get item matrix from the first measurement
+df_mirt <- dfm %>%
+  filter(wave_ind == 1) %>%
+  select(rowid, all_of(item_names))
+
+n_df_mirt <- nrow(df_mirt)
+
+```
+
+Calibration on first measurement data. Sample size (N = `r n_df_mirt`) is sufficient. It is though possible to calibrate the model from *every* measurement (see [Cai, 2010](http://doi.org/10.1007/s11336-010-9178-0)). But...
+
+In the future, we should compare different IRT models for fit and try different method of estimation.
+
+```{r}
+library(mirt)
+
+# estimate all COVs, otherwise mirt presumes orthogonality of all factors,
+# which certainly does not hold true
+mirt_model <- "
+emo = 1-5
+con = 6-10
+hyp = 11-15
+pee = 16-20
+pro = 21-25
+
+COV = emo*con*hyp*pee*pro
+"
+mirtCluster(4) # use 4  cores
+mirt_fit <- mirt(df_mirt[, -1], mirt_model, "graded", SE = FALSE, method = "MHRM")
+
+# summary(mirt_fit)
+# coef(mirt_fit, simplify = TRUE)
+# itemfit(mirt_fit, na.rm = TRUE, method = "QMC")
+
+# extract response patterns for individual wave_ind
+resp_pat <- map(1:6, ~ {
+  dfm %>%
+    filter(wave_ind == .x) %>%
+    filter_at(vars(item_names), any_vars(!is.na(.))) %>% 
+    select(rowid, all_of(item_names))
+})
+
+# estimate thetas for all waves
+thetas <- map(
+  resp_pat,
+  ~ fscores(
+    mirt_fit,
+    method = "MAP",
+    QMC = TRUE,
+    full.scores.SE = FALSE,
+    append_response.pattern = FALSE,
+    response.pattern = .x[, -1]
+  ) %>% as_tibble %>% bind_cols(.x[, 1], .) # append rowids
+)
+
+# rename and turn list into tibble
+thetas_tbl <-
+  map_dfr(
+    thetas,
+    ~ .x %>% select(rowid, F1:F5) %>% rename(
+      "emo" = F1,
+      "con" = F2,
+      "hyp" = F3,
+      "pee" = F4,
+      "pro" = F5
+    )
+  )
+
+# combine with thetas estimates, save it to the main dataset
+dfm <- thetas_tbl %>% left_join(dfm, ., by = "rowid")
+
+```
+
+Much better! For now on, we work with *theta* estimates.
+
+```{r}
+dfm %>%
+  drop_na(gender_girl) %>%
+  mutate(wave_ind = as.factor(wave_ind)) %>%
+  select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(value, col = wave_ind)) +
+  geom_density() +
+  facet_grid(gender_girl ~ name) +
+  theme_schola("x", multiplot = TRUE, legend.position = "bottom") +
+  guides(colour = guide_legend(nrow = 1)) +
+  labs(title = "Latent traits estimates", subtitle = "by gender, SDQ dimension and measurement number")
+
+```
+Age -- some serious outliers there. TODO
+
+```{r}
+dfm %>%
+  drop_na(gender_girl) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(age, value, col = gender_girl)) +
+  geom_jitter(alpha = .1) +
+  geom_smooth() +
+  facet_grid(is_intervention2 ~ name) +
+  theme_schola("scatter")
+```
+
+CI is off because of dependent data.
+
+```{r}
+dfm %>% select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(x = wave_ind, value, col = is_intervention2)) +
+  geom_line(aes(group = id_pupil), alpha = .05) +
+  geom_smooth(method = "loess", se = FALSE, size = 1.5) + # fit may be unreliable!
+  facet_wrap(~ name)
+
+```
+Check measurements dependency
+
+```{r}
+library(corrr)
+
+time_dependency <- function(df, dim, method = "pearson") {
+  prefix <- dim
+  dim <- enquo(dim)
+  
+  df %>% pivot_wider(id_cols = c(id_pupil), names_from = wave_ind, values_from = !!dim, names_prefix = paste0(str_extract(prefix, "[:alpha:]+"), "_")) %>% select(-id_pupil) %>% corrr::correlate(method = method) %>% corrr::shave(upper = FALSE) %>% corrr::fashion()
+}
+
+map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman"))
+
+```
