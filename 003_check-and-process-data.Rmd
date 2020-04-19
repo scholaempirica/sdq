@@ -21,15 +21,19 @@ See `002_read-date.R` for details. Using `here` package already loaded before, w
 Also, solve the packages namespace conflict problem. Package `conflicted` from *tidyverse* does the job nice and clean. Another option is to "rewrite" the function, e.g. `select <- dplyr::select`.
 
 ```{r}
+library(assertr)
+library(conflicted)
+library(corrr)
 library(here)
-library(tidyverse)
-library(reschola)
+library(lubridate)
 library(magrittr)
-library(naniar)
 library(mirt)
+library(naniar)
+library(reschola)
+library(tidyverse)
+library(visdat)
 
 # resolve conflicts
-library(conflicted)
 conflict_prefer("here", "here")
 conflict_prefer("filter", "dplyr")
 
@@ -53,8 +57,6 @@ One important drawback to `assert`, and a consequence of its application of the 
 These functions can be "pipelined". Success and error evaluations can be modified (see `help("success_and_error_functions")`).
 
 ```{r}
-library(assertr)
-
 gender_check <- dfm %>%
   assert(
     in_set("boys", "girls"),
@@ -109,8 +111,6 @@ dfm %>% insist(
 Make `born` and `fill_in_date` vars, returning NA when any original parts is NA.
 
 ```{r}
-library(lubridate)
-
 dfm %<>% mutate(born = ymd(if_else(
   is.na(born_year) | is.na(born_month), NA_character_,
   paste(born_year, born_month, "1", sep = "-")
@@ -274,7 +274,7 @@ noncosecutives %>% select(id_pupil, wave_ind_presumed, wave_ind_actual) %>% samp
 For now on, we work with *clean* dataset only. It could be changed via editing  this filter:
 
 ```{r}
-dfm %<>% filter(invalid_case)
+dfm %<>% filter(invalid_case == FALSE)
 ```
 
 ## Auxiliary/derived variable *after* filtering
@@ -312,8 +312,6 @@ dfm %<>% left_join(born_age, by = "id_pupil")
 Quick overview:
 
 ```{r, fig.width = 15}
-library(visdat)
-
 vis_dat(dfm) # visualize types of variables
 ```
 
@@ -415,7 +413,7 @@ Calibration on first measurement data. Sample size (N = `r n_df_mirt`) is suffic
 
 In the future, we should compare different IRT models for fit and try different method of estimation.
 
-```{r results='hide'}
+```{r, results = 'hide', cache = TRUE}
 # estimate all COVs, otherwise mirt presumes orthogonality of all factors,
 # which certainly does not hold true
 mirt_model <- "
@@ -438,7 +436,7 @@ mirt_fit <- mirt(df_mirt[, -1], mirt_model, "graded", SE = FALSE, method = "MHRM
 resp_pat <- map(1:6, ~ {
   dfm %>%
     filter(wave_ind == .x) %>%
-    filter_at(vars(item_names), any_vars(!is.na(.))) %>% 
+    filter_at(vars(all_of(item_names)), any_vars(!is.na(.))) %>% 
     select(rowid, all_of(item_names))
 })
 
@@ -488,7 +486,8 @@ dfm %>%
   labs(title = "Latent traits estimates", subtitle = "by gender, SDQ dimension and measurement number")
 ```
 
-Age -- some serious outliers there. TODO
+Age
+TODO: outliers
 
 ```{r}
 dfm %>%
@@ -516,8 +515,6 @@ dfm %>% select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
 Check measurements dependency
 
 ```{r}
-library(corrr)
-
 time_dependency <- function(df, dim, method = "pearson") {
   prefix <- dim
   dim <- enquo(dim)
@@ -532,3 +529,10 @@ time_dependency <- function(df, dim, method = "pearson") {
 
 map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman"))
 ```
+
+# Export processed RDS
+
+```{r}
+dfm %>% write_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
+```
+

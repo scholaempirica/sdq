@@ -14,18 +14,161 @@ abstract: Lorem ipsum abstract
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(include = F) # by default, chunk code and output is hidden
+knitr::opts_chunk$set(include = T) # by default, chunk code and output is hidden
 options(scipen = 10) # force R to show full numbers, not scientific notation
 
 library(reschola)
 library(tidyverse)
 library(scales)
-# source("shared.R") # uncomment if working in a reschola project with a shared.R script
+source("shared.R") # uncomment if working in a reschola project with a shared.R script
 set_reschola_ggplot_fonts() # make ggplot2 use Roboto fonts without you having to set it
+library(here)
+library(corrr)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(conflicted)
 ```
 
 ```{r}
+dfm <- read_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
 
+dfm %>%
+  drop_na(gender_girl) %>%
+  mutate(wave_ind = as.factor(wave_ind)) %>%
+  select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(value, col = wave_ind)) +
+  geom_density() +
+  facet_grid(gender_girl ~ name) +
+  theme_schola("x", multiplot = TRUE, legend.position = "bottom") +
+  guides(colour = guide_legend(nrow = 1)) +
+  labs(title = "Latent traits estimates", subtitle = "by gender, SDQ dimension and measurement number")
+```
+
+Much better! For now on, we work with *theta* estimates.
+
+<!-- Age -->
+
+<!-- ```{r} -->
+<!-- dfm %>% -->
+<!--   drop_na(gender_girl) %>% -->
+<!--   pivot_longer(emo:pro) %>% -->
+<!--   ggplot(aes(age, value, col = gender_girl)) + -->
+<!--   geom_jitter(alpha = .1) + -->
+<!--   geom_smooth() + -->
+<!--   facet_grid(is_intervention2 ~ name) + -->
+<!--   theme_schola("scatter") -->
+<!-- ``` -->
+
+CI is off because of dependent data.
+
+```{r}
+dfm %>% select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(x = wave_ind, value, col = is_intervention2)) +
+  geom_line(aes(group = id_pupil), alpha = .05) +
+  geom_smooth(method = "loess", se = FALSE, size = 1.5) + # fit may be unreliable!
+  facet_wrap(~ name)
+```
+
+Check measurements dependency
+
+```{r}
+time_dependency <- function(df, dim, method = "pearson") {
+  prefix <- dim
+  dim <- enquo(dim)
+  
+  df %>% pivot_wider(id_cols = c(id_pupil), names_from = wave_ind, values_from = !!dim, names_prefix = paste0(str_extract(prefix, "[:alpha:]+"), "_")) %>% select(-id_pupil) %>% corrr::correlate(method = method) %>% corrr::shave(upper = FALSE) %>% corrr::fashion()
+}
+
+map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman"))
+```
+
+
+```{r}
+# first measure to 0 - meaningful intercept - mean outcome for 1st timepoint
+df_long_zero <-
+  dfm %>% mutate(wave_ind = as.numeric(wave_ind) - 1)
+```
+
+null model
+
+```{r}
+conflict_prefer("lmer", "lmerTest")
+null_model <- lmer(emo ~ (1 | id_pupil), data = df_long_zero)
+summary(null_model)
+```
+
+random intercept + slope
+
+pupils are nested within classes
+
+TODO: check id_class
+
+```{r}
+ris_model <- lmer(pro ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_pupil), data = df_long_zero)
+summary(ris_model)
+plot(ris_model)
+
+```
+
+
+
+```{r}
+
+resid(ris_model) %>%
+  as_tibble %>%
+  mutate(id = 1:n()) %>%
+  ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line()
+
+# drop all cases having NA in crutial vars (from fitted model):
+
+# residuals densities
+df_long_zero %>% drop_na(ris_model@frame %>% colnames) %>%
+  mutate(model_residuals = residuals(ris_model)) %>%
+ggplot(aes(x = model_residuals)) +
+  geom_density(aes(color = is_intervention2), size = 1.25) +
+  xlab("Residuals")
+
+# random effects of id_pupils to long format
+ranef(ris_model)$id_pupil %>%
+  mutate(id = 1:n()) %>%
+  pivot_longer(-id, "variable", "value") %>%
+ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~ variable, scales = 'free_y')
+
+```
+
+Vizualizace modelu -- průměry 
+
+```{r}
+df_long_zero %>%
+  drop_na(ris_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(ris_model, re.form = NA)) %>% # fixed eff only
+  group_by(wave_ind, is_intervention2) %>% 
+  summarise(pred_mean = mean(pred_val)) %>% 
+  ggplot(aes(x = wave_ind, col = is_intervention2)) +
+  geom_boxplot(aes(y = pro, group = wave_ind), data = df_long_zero) +
+  # stat_density_2d(aes(y = emo, fill = ..density..),
+  # geom = "raster", contour = FALSE, data = df_long_zero) +
+  geom_line(aes(y = pred_mean), size = 1.5) +
+  scale_fill_distiller(palette = "Spectral", direction = -1)
+```
+random effect for sample of 50 pupils
+
+```{r}
+#rand effects
+tidy(ris_model, effects = "ran_vals", conf.int = TRUE) %>% sample_n(50) %>% 
+ggplot(aes(level, estimate)) +
+  geom_pointrange(aes(
+    ymin = estimate - 1.96 * std.error,
+    ymax = estimate + 1.96 * std.error
+  )) + coord_flip() 
 ```
 
 \newpage
