@@ -1,19 +1,6 @@
-# should hold code that reads the data and does any transformations immediately tied to data reading,
-# e.g. setting data types or basic filtering. Again, this is code that you don’t expect to change
-# as you work on the actual analysis. You may want to save the result into rds files
-# in data-intermediate (or data-input if it is simply an rds mirror of the input data saved for quick access.)
-
-
-
-# set data types
-# basic filtering
-# SAVE results in RDS to data-intermediate
-#
-
 library(here)
 library(tidyverse)
 library(magrittr)
-
 
 # read everything as character, so nothing is lost due to "force parsing" of readr
 dfm <- read_csv(here("data-input/SDQ_all_incl_w7.csv"),

@@ -1,5 +1,5 @@
 ---
-title: "Validate and *filter* out bad cases"
+title: "Data validation and cleaning"
 output: 
   html_notebook: 
     toc: yes
@@ -7,7 +7,7 @@ output:
     number_sections: yes
 ---
 
-I am trying to use R Notebook instead of standard R Markdown. It may be more readable than a raw R Script and more flexible than typical R Markdown.
+I am trying to use R Notebook instead of standard R Markdown, as it may be more readable than a raw R Script and more flexible than typical R Markdown.
 
 Citing from default text of R Notebook:
 
@@ -16,25 +16,24 @@ Citing from default text of R Notebook:
 
 # Reading from pre-processed RDS
 
-First, solve conflict problem. Package `conflicted` from *tidyverse* does the job nice and clean.
-
-```{r}
-library(conflicted)
-conflict_prefer("here", "here")
-conflict_prefer("filter", "dplyr")
-```
-
 See `002_read-date.R` for details. Using `here` package already loaded before, we can simply locate our files. Just type `here("")` and (with the cursor right in between the quotation marks) press Tab for obtaining nice list of available files. No need to type and get typos...
+
+Also, solve the packages namespace conflict problem. Package `conflicted` from *tidyverse* does the job nice and clean. Another option is to "rewrite" the function, e.g. `select <- dplyr::select`.
 
 ```{r}
 library(here)
 library(tidyverse)
 library(reschola)
 library(magrittr)
+library(naniar)
+library(mirt)
+
+# resolve conflicts
+library(conflicted)
+conflict_prefer("here", "here")
+conflict_prefer("filter", "dplyr")
 
 dfm <- read_rds(here("data-intermediate/waves_1-7.rds"))
-dfm %>% nrow
-
 ```
 
 # Validating
@@ -47,7 +46,7 @@ Basic functions with examples from `mtcars`:
 * `verify(mpg > 0)` -- for simple check if specified variable is positive number
 * `assert(within_bounds(0, 100), mpg)` -- check if `mpg` variable is within specified bounds, it is easy to select more variables with `dplyr`-like manner, so you can select all variables *except* `mpg` with `-mpg` (difference between verify and assert is that verify takes an expression, and assert takes a predicate and columns to apply it to^[This might make the `verify` function look more elegant–but there’s an important drawback. `verify` has to evaluate the entire expression first, and then check if there were any violations. Because of this, `verify` can’t tell you the offending datum.
 One important drawback to `assert`, and a consequence of its application of the predicate to columns, is that `assert` can’t confirm assertions about the data structure itself.]); the built-in predicates are `not_na`, `within_bounds`, `in_set`, and `is_uniq`
-* `insist(within_n_mads(3), mpg)` -- when we are validating against unknown value that needs to be computed first column-by-column; in this particular example MADS is used instead of SD, because of outliers could make SD useless 
+* `insist(within_n_mads(3), mpg)` -- when we are validating against unknown value that needs to be computed first column-by-column; in this particular example MADS is used instead of SD, because the outliers could make SD useless 
 * `insist_rows(maha_dist, within_n_mads(3), everything())` -- row-wise approach, e.g. for identifying outliers based on Mahalanobis' distance
 * `assert_rows(num_row_NAs, within_bounds(0, 2)` -- row-wise `assert` approach, identifying cases with 0-2 NAs (in the example)
 
@@ -85,7 +84,8 @@ years_check <- dfm %>%
   )
 years_check
 ```
-Apparently, we have plenty of NAs in `gender_girl`, one typo in year and one test subject (by ID...). We can repair the first and exclude the second.
+
+Apparently, we have one typo in year and one subject that is not intended to be evaluated with the rest (test subject by ID...). We can repair the first and exclude the second.
 
 ```{r}
 # repair nonsensical value with the most likely value
@@ -93,7 +93,6 @@ Apparently, we have plenty of NAs in `gender_girl`, one typo in year and one tes
 dfm %<>%
   slice(-(years_check %>% filter(column == "born_year") %>% pull(index))) %>% 
   mutate(fill_in_year = ifelse(fill_in_year == 2108, 2018, fill_in_year))
-dfm %>% nrow
 
 # check if solved
 dfm %>% insist(
@@ -105,7 +104,7 @@ dfm %>% insist(
 )
 ```
 
-## Auxiliary variables
+## Auxiliary/derived variables
 
 Make `born` and `fill_in_date` vars, returning NA when any original parts is NA.
 
@@ -120,15 +119,11 @@ fill_in_date = ymd(if_else(
   is.na(fill_in_year) | is.na(fill_in_month), NA_character_,
   paste(fill_in_year, fill_in_month, "1", sep = "-")
 )))
-dfm %>% nrow
-
 ```
 
 Rank measurements by `fill_in_date`, only for IDs having complete dates filled in.
 
 ```{r}
-library(naniar)
-
 wave_rank <- dfm %>% 
   group_by(id_pupil) %>%
   filter(!any_na(fill_in_date)) %>% # exclude any NA in fill_in_date
@@ -138,16 +133,11 @@ wave_rank <- dfm %>%
 
 # merge back to original dataset
 dfm %<>% left_join(wave_rank)
-
-dfm %>% nrow
-
 ```
 
+## Custom checks
 
-
-## Custom
-
-However, to my knowledge and for our purposes, `assertr` nor any other "validating" package can spot IDs changing gender, birthday nor messed-up IDs referring to multiple subjects. Thus, there is a need to write proprietary functions as follows.
+However, to my knowledge and for our purposes, `assertr` nor any other "validating" package can spot IDs changing gender, birthday nor "messed-up" IDs referring to multiple subjects. Thus, there is a need to write proprietary functions as follows.
 
 ```{r}
 spot_weirdos <- function(df, id, var, type) {
@@ -172,12 +162,14 @@ spot_weirdos <- function(df, id, var, type) {
 }
 ```
 
-Function `spot_weirdo(dataframe, id variable, variable of interest, type of variable)` returns IDs of so-called "weirdos", i.e. IDs with weird variable. This weirdness can be of two type -- variable is expected to:
+Function `spot_weirdo(dataframe, id variable, variable of interest, type of variable)` returns IDs of so-called "weirdos", i.e. IDs with "weird" variable. This weirdness can be of two type -- variable is either expected to:
 
 1. be unique within ID (e.g. gender) -- i.e. `type = "unique"` or `type = "u"`
 2. having one value only once (e.g. measurement number) -- i.e. `type = "nonrepeating"` or `type = "nr"`
 
 You need to specify the ID variable, the variable "weirdos" is meant to be spotted on, and the type of weirdness. Feel free to use it in a pipeline. Note that NAs (**not explicit NAs** by `forcats`) are completely ignored. Please avoid using explicit NAs, as `n_distinct` function does not consider them as "proper" NAs.
+
+`spot_weirdo` in action:
 
 ```{r}
 nuniq_born <- dfm %>% spot_weirdos(id_pupil, born, "u")
@@ -188,7 +180,7 @@ nuniq_wave_rank <- dfm %>% spot_weirdos(id_pupil, wave_rank, "nr")
 
 ## Duplicates
 
-Moreover, it is useful to check whether the dataset does contain any duplicates. We are lenient to typos and are considering only the most crucial variables. REGEX refers to all SDQ items (begins with "t" and does not include any "_").
+Moreover, it is useful to check whether the dataset contains any duplicates. We are lenient to typos and are considering only the most crucial variables. REGEX expression refers to all SDQ items (they always begin with "t" and do not contain any "_").
 
 ```{r}
 distinct_rowids <- dfm %>%
@@ -200,7 +192,7 @@ duplicates <- dfm %>% filter(!rowid %in% distinct_rowids) %>% pull(id_pupil) %>%
 
 ## Conclusion
 
-Let's have a look at the problem (and the scale of it). First, make new variable indicating any problem with ID.
+Let's have a look at the problem (and the scale of it). First, make new variables indicating whether an ID has any problem.
 
 ```{r}
 dfm %<>% mutate(
@@ -210,9 +202,12 @@ dfm %<>% mutate(
   invalid_wave_rank = if_else(id_pupil %in% nuniq_wave_rank, TRUE, FALSE),
   invalid_duplicate = if_else(id_pupil %in% duplicates, TRUE, FALSE)
 )
+
+# global invalid var
+dfm %<>% mutate(invalid_case = if_else(rowSums(select(., contains("invalid"))) == 0, FALSE, TRUE)) 
 ```
 
-How many invalid IDs do we have, total?
+How many invalid IDs do we have?
 
 ```{r}
 dfm %>% count(
@@ -222,14 +217,12 @@ dfm %>% count(
   invalid_wave_rank,
   invalid_duplicate
 )
-
-# dfm %>% filter(invalid_id == TRUE) %>% pull(id_pupil) %>% n_distinct()
 ```
 
-Cleaning impact by **WAVE_IND** (measurement)
+Impact of cleaning by **WAVE_IND** (measurement)
 
 ```{r}
-dfm %>% filter(invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE) %>%
+dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>%
   count(wave_ind) %>%
   left_join(dfm %>% count(wave_ind), ., by = "wave_ind") %>%
   mutate(diff = n.x - n.y, "% lost" = ((1 - (n.y / n.x)) * 100)) %>%
@@ -238,10 +231,10 @@ dfm %>% filter(invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_bor
          "# lost" = 4)
 ```
 
-Cleaning impact impact by **WAVE**
+Impact of cleaning impact by **WAVE**
 
 ```{r}
-dfm %>% filter(invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE) %>% count(wave) %>%
+dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>% count(wave) %>%
   left_join(dfm %>% count(wave), ., by = "wave") %>%
   mutate(diff = n.x - n.y, "% lost" = ((1 - (n.y / n.x)) * 100)) %>%
   rename("# raw" = 2,
@@ -267,7 +260,7 @@ noncosecutives <- dfm %>%
 Counts of nonconsecutive cases by their "validity status"
 
 ```{r}
-noncosecutives %>% count(invalid = invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE)
+noncosecutives %>% count(invalid_case)
 ```
 
 Example:
@@ -278,22 +271,21 @@ noncosecutives %>% select(id_pupil, wave_ind_presumed, wave_ind_actual) %>% samp
 
 ### Filtering
 
-For now on, we work with clean dataset only. It could be changed via editing of this filter:
+For now on, we work with *clean* dataset only. It could be changed via editing  this filter:
 
 ```{r}
-dfm %<>% filter(invalid_wave_ind == FALSE & invalid_gender == FALSE & invalid_born == FALSE)
+dfm %<>% filter(invalid_case)
 ```
 
-## Auxiliary variable after filtering
+## Auxiliary/derived variable *after* filtering
 
-Age and age at the first measurement variables can be derived in straightforward way only after main filtering.
+`Age` and `age at the first measurement` variables can be derived in straightforward way only after main filtering is done.
 
-Age at measurement and age at first measurement
+### Age at measurement and age at first measurement
 
 ```{r}
 # get time interval in years
 dfm %<>% mutate(age = interval(born, fill_in_date) %>% as.numeric('years'))
-dfm %>% nrow
 
 # get cases with known birthday; only one value per ID
 birthdays <-
@@ -315,7 +307,6 @@ born_age <-
 dfm %<>% left_join(born_age, by = "id_pupil")
 ```
 
-
 ## Descriptive visualizations / statistics
 
 Quick overview:
@@ -326,7 +317,7 @@ library(visdat)
 vis_dat(dfm) # visualize types of variables
 ```
 
-Intervention by birthday:
+### Intervention by birthday
 
 ```{r}
 dfm %>% count(missing_birthday = is.na(born), intervention = is_intervention2) %>%
@@ -337,7 +328,8 @@ dfm %>% ggplot(aes(born, col = is_intervention2)) + geom_density()
 
 dfm %>% ggplot(aes(born, is_intervention2)) + geom_boxplot()
 ```
-Gender
+
+### Gender
 
 ```{r}
 dfm %>% count(missing_gender = is.na(gender_girl), intervention = is_intervention2) %>%
@@ -349,7 +341,7 @@ dfm %>% count(gender = gender_girl, intervention = is_intervention2) %>%
   geom_bar(position = "fill", stat = "identity") 
 ```
 
-Age, intervention and SDQ
+### Age, intervention and SDQ
 
 ```{r}
 dfm %>%
@@ -361,11 +353,12 @@ dfm %>%
   facet_grid(is_intervention2 ~ name)
 ```
 
-SDQ dimensions distributions by gender
+### SDQ dimensions distributions by gender
 
 > A skew no one can undo...
 
 First measurement only:
+
 ```{r}
 dfm %>% filter(wave_ind == 1) %>% 
   drop_na(gender_girl) %>%
@@ -377,6 +370,7 @@ dfm %>% filter(wave_ind == 1) %>%
 ```
 
 Second measurement only:
+
 ```{r}
 dfm %>% filter(wave_ind == 2) %>% 
   drop_na(gender_girl) %>%
@@ -415,16 +409,13 @@ df_mirt <- dfm %>%
   select(rowid, all_of(item_names))
 
 n_df_mirt <- nrow(df_mirt)
-
 ```
 
 Calibration on first measurement data. Sample size (N = `r n_df_mirt`) is sufficient. It is though possible to calibrate the model from *every* measurement (see [Cai, 2010](http://doi.org/10.1007/s11336-010-9178-0)). But...
 
 In the future, we should compare different IRT models for fit and try different method of estimation.
 
-```{r}
-library(mirt)
-
+```{r results='hide'}
 # estimate all COVs, otherwise mirt presumes orthogonality of all factors,
 # which certainly does not hold true
 mirt_model <- "
@@ -479,7 +470,6 @@ thetas_tbl <-
 
 # combine with thetas estimates, save it to the main dataset
 dfm <- thetas_tbl %>% left_join(dfm, ., by = "rowid")
-
 ```
 
 Much better! For now on, we work with *theta* estimates.
@@ -496,12 +486,13 @@ dfm %>%
   theme_schola("x", multiplot = TRUE, legend.position = "bottom") +
   guides(colour = guide_legend(nrow = 1)) +
   labs(title = "Latent traits estimates", subtitle = "by gender, SDQ dimension and measurement number")
-
 ```
+
 Age -- some serious outliers there. TODO
 
 ```{r}
 dfm %>%
+  filter(wave_ind == 1) %>%
   drop_na(gender_girl) %>%
   pivot_longer(emo:pro) %>%
   ggplot(aes(age, value, col = gender_girl)) +
@@ -520,8 +511,8 @@ dfm %>% select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
   geom_line(aes(group = id_pupil), alpha = .05) +
   geom_smooth(method = "loess", se = FALSE, size = 1.5) + # fit may be unreliable!
   facet_wrap(~ name)
-
 ```
+
 Check measurements dependency
 
 ```{r}
@@ -531,9 +522,13 @@ time_dependency <- function(df, dim, method = "pearson") {
   prefix <- dim
   dim <- enquo(dim)
   
-  df %>% pivot_wider(id_cols = c(id_pupil), names_from = wave_ind, values_from = !!dim, names_prefix = paste0(str_extract(prefix, "[:alpha:]+"), "_")) %>% select(-id_pupil) %>% corrr::correlate(method = method) %>% corrr::shave(upper = FALSE) %>% corrr::fashion()
+  df %>% pivot_wider(
+    id_cols = c(id_pupil),
+    names_from = wave_ind,
+    values_from = !!dim,
+    names_prefix = paste0(str_extract(prefix, "[:alpha:]+"), "_")
+  ) %>% select(-id_pupil) %>% corrr::correlate(method = method) %>% corrr::shave(upper = FALSE) %>% corrr::fashion()
 }
 
 map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman"))
-
 ```
