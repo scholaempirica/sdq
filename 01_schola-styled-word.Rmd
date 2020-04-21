@@ -27,13 +27,18 @@ library(corrr)
 library(lme4)
 library(lmerTest)
 library(broom.mixed)
+library(flextable)
 library(conflicted)
 conflict_prefer("lmer", "lmerTest")
+conflict_prefer("filter", "dplyr")
 ```
 
 ```{r}
 dfm <- read_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
+```
 
+
+```{r}
 dfm %>%
   drop_na(gender_girl) %>%
   mutate(wave_ind = as.factor(wave_ind)) %>%
@@ -44,37 +49,34 @@ dfm %>%
   facet_grid(gender_girl ~ name) +
   theme_schola("x", multiplot = TRUE, legend.position = "bottom") +
   guides(colour = guide_legend(nrow = 1)) +
-  labs(title = "Latent traits estimates", subtitle = "by gender, SDQ dimension and measurement number")
+  labs(title = "Latent trait estimates", subtitle = "by gender, SDQ dimension and measurement number")
 ```
 
-Much better! For now on, we work with *theta* estimates.
-
-<!-- Age -->
-
-<!-- ```{r} -->
-<!-- dfm %>% -->
-<!--   drop_na(gender_girl) %>% -->
-<!--   pivot_longer(emo:pro) %>% -->
-<!--   ggplot(aes(age, value, col = gender_girl)) + -->
-<!--   geom_jitter(alpha = .1) + -->
-<!--   geom_smooth() + -->
-<!--   facet_grid(is_intervention2 ~ name) + -->
-<!--   theme_schola("scatter") -->
-<!-- ``` -->
-
-CI is off because of dependent data.
+```{r}
+dfm %>% filter(wave_ind == 1) %>% 
+  drop_na(gender_girl) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(age, value, col = gender_girl)) +
+  geom_jitter(alpha = .1) +
+  geom_smooth() +
+  facet_grid(is_intervention2 ~ name) +
+  theme_schola("scatter") +
+  labs(title = "Věk a dimenze SDQ", subtitle = "první měření")
+```
 
 ```{r}
-dfm %>% select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
+dfm %>%
+  select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
   pivot_longer(emo:pro) %>%
   ggplot(aes(x = wave_ind, value, col = is_intervention2)) +
   geom_line(aes(group = id_pupil), alpha = .06) +
   geom_smooth(method = "loess", se = FALSE, size = 1) + # fit may be unreliable!
   facet_grid(is_intervention2 ~ name) +
-  theme_schola("x", multiplot = TRUE, legend.position = "bottom")
+  theme_schola("x", multiplot = TRUE, legend.position = "bottom") +
+  labs(title = "Jednotlivé trajektorie a průměrný trend", col = "skupina")
 ```
 
-Check measurements dependency
+*Test* tabulek -- time dependency
 
 ```{r}
 time_dependency <- function(df, dim, method = "pearson") {
@@ -84,7 +86,10 @@ time_dependency <- function(df, dim, method = "pearson") {
   df %>% pivot_wider(id_cols = c(id_pupil), names_from = wave_ind, values_from = !!dim, names_prefix = paste0(str_extract(prefix, "[:alpha:]+"), "_")) %>% select(-id_pupil) %>% corrr::correlate(method = method) %>% corrr::shave(upper = FALSE) %>% corrr::fashion()
 }
 
-map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman"))
+time_dependency(dfm, "pro", "spear") %>% flextable()
+
+# purr and flextable -- to be solved
+map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman") %>% regulartable)
 ```
 
 
@@ -94,38 +99,44 @@ df_long_zero <-
   dfm %>% mutate(wave_ind = as.numeric(wave_ind) - 1)
 ```
 
-null model
+## Null model
 
 ```{r}
 null_model <- lmer(emo ~ (1 | id_pupil), data = df_long_zero)
 summary(null_model)
 ```
 
-random intercept + slope
+## random intercept + slope
 
-pupils are nested within classes
+pupils are not yet nested within classes, model fails to converge
 
 TODO: check id_class
 
 ```{r}
-ris_model <- lmer(pro ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_class / id_pupil), data = df_long_zero)
+ris_model <- lmer(pro ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_pupil), data = df_long_zero)
 summary(ris_model)
-plot(ris_model)
+
+df_long_zero %>% drop_na(ris_model@frame %>% colnames) %>%
+  mutate(model_residuals = resid(ris_model), pred_vals = predict(ris_model)) %>%
+ggplot(aes(pred_vals, model_residuals)) +
+  geom_point(alpha = .15) +
+  geom_vline(xintercept = 0, col = "red") +
+  geom_hline(yintercept = 0, col = "red") +
+  theme_schola("scatter") +
+  labs(title = "Reziduály fitovaného modelu")
+
 ```
 
 
-
 ```{r}
-
 resid(ris_model) %>%
   as_tibble %>%
   mutate(id = 1:n()) %>%
   ggplot(aes(sample = value)) +
   geom_qq() +
   geom_qq_line() +
-  theme_schola("scatter")
-
-# drop all cases having NA in crutial vars (from fitted model):
+  theme_schola("scatter") +
+  labs(title = "Q-Q plot reziduálů")
 
 # residuals densities
 df_long_zero %>% drop_na(ris_model@frame %>% colnames) %>%
@@ -133,7 +144,8 @@ df_long_zero %>% drop_na(ris_model@frame %>% colnames) %>%
 ggplot(aes(x = model_residuals)) +
   geom_density(aes(color = is_intervention2), size = 1.25) +
   xlab("Residuals") +
-  theme_schola("x")
+  theme_schola("x") +
+  labs(title = "Hustoty reziduálů dle skupiny")
 
 # random effects of id_pupils to long format
 ranef(ris_model)$id_pupil %>%
@@ -143,11 +155,12 @@ ggplot(aes(sample = value)) +
   geom_qq() +
   geom_qq_line() +
   facet_wrap(~ variable, scales = 'free_y') +
-  theme_schola("scatter")
+  theme_schola("scatter") +
+  labs(title = "Q-Q ploty random efektů")
 
 ```
 
-Vizualizace modelu -- průměry 
+## Vizualizace modelu -- průměry 
 
 ```{r}
 df_long_zero %>%
@@ -163,9 +176,11 @@ df_long_zero %>%
   ), data = df_long_zero) +
   geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
   scale_fill_distiller(palette = "Spectral", direction = -1) +
-  theme_schola("y")
+  theme_schola("y") +
+  labs(title = "Model a naměřená data")
 ```
-random effect for sample of 50 pupils
+
+## random effect for sample of 50 pupils
 
 ```{r}
 #rand effects
@@ -174,11 +189,10 @@ ggplot(aes(level, estimate)) +
   geom_pointrange(aes(
     ymin = estimate - 1.96 * std.error,
     ymax = estimate + 1.96 * std.error
-  )) + coord_flip() 
+  )) + coord_flip() +
+  theme_schola("x") +
+  labs(title = "50 náhodně vybraných interceptů")
 ```
-
-\newpage
-<!-- "\newpage" is how you insert a page break which will be reflected in the Word doc -->
 
 
 
