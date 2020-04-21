@@ -28,6 +28,7 @@ library(lme4)
 library(lmerTest)
 library(broom.mixed)
 library(conflicted)
+conflict_prefer("lmer", "lmerTest")
 ```
 
 ```{r}
@@ -67,9 +68,10 @@ CI is off because of dependent data.
 dfm %>% select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
   pivot_longer(emo:pro) %>%
   ggplot(aes(x = wave_ind, value, col = is_intervention2)) +
-  geom_line(aes(group = id_pupil), alpha = .05) +
-  geom_smooth(method = "loess", se = FALSE, size = 1.5) + # fit may be unreliable!
-  facet_wrap(~ name)
+  geom_line(aes(group = id_pupil), alpha = .06) +
+  geom_smooth(method = "loess", se = FALSE, size = 1) + # fit may be unreliable!
+  facet_grid(is_intervention2 ~ name) +
+  theme_schola("x", multiplot = TRUE, legend.position = "bottom")
 ```
 
 Check measurements dependency
@@ -95,7 +97,6 @@ df_long_zero <-
 null model
 
 ```{r}
-conflict_prefer("lmer", "lmerTest")
 null_model <- lmer(emo ~ (1 | id_pupil), data = df_long_zero)
 summary(null_model)
 ```
@@ -107,10 +108,9 @@ pupils are nested within classes
 TODO: check id_class
 
 ```{r}
-ris_model <- lmer(pro ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_pupil), data = df_long_zero)
+ris_model <- lmer(pro ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_class / id_pupil), data = df_long_zero)
 summary(ris_model)
 plot(ris_model)
-
 ```
 
 
@@ -122,7 +122,8 @@ resid(ris_model) %>%
   mutate(id = 1:n()) %>%
   ggplot(aes(sample = value)) +
   geom_qq() +
-  geom_qq_line()
+  geom_qq_line() +
+  theme_schola("scatter")
 
 # drop all cases having NA in crutial vars (from fitted model):
 
@@ -131,7 +132,8 @@ df_long_zero %>% drop_na(ris_model@frame %>% colnames) %>%
   mutate(model_residuals = residuals(ris_model)) %>%
 ggplot(aes(x = model_residuals)) +
   geom_density(aes(color = is_intervention2), size = 1.25) +
-  xlab("Residuals")
+  xlab("Residuals") +
+  theme_schola("x")
 
 # random effects of id_pupils to long format
 ranef(ris_model)$id_pupil %>%
@@ -140,7 +142,8 @@ ranef(ris_model)$id_pupil %>%
 ggplot(aes(sample = value)) +
   geom_qq() +
   geom_qq_line() +
-  facet_wrap(~ variable, scales = 'free_y')
+  facet_wrap(~ variable, scales = 'free_y') +
+  theme_schola("scatter")
 
 ```
 
@@ -150,14 +153,17 @@ Vizualizace modelu -- průměry
 df_long_zero %>%
   drop_na(ris_model@frame %>% colnames) %>%
   mutate(pred_val = predict(ris_model, re.form = NA)) %>% # fixed eff only
-  group_by(wave_ind, is_intervention2) %>% 
-  summarise(pred_mean = mean(pred_val)) %>% 
-  ggplot(aes(x = wave_ind, col = is_intervention2)) +
-  geom_boxplot(aes(y = pro, group = wave_ind), data = df_long_zero) +
-  # stat_density_2d(aes(y = emo, fill = ..density..),
-  # geom = "raster", contour = FALSE, data = df_long_zero) +
-  geom_line(aes(y = pred_mean), size = 1.5) +
-  scale_fill_distiller(palette = "Spectral", direction = -1)
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = pro,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  scale_fill_distiller(palette = "Spectral", direction = -1) +
+  theme_schola("y")
 ```
 random effect for sample of 50 pupils
 
