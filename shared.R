@@ -7,3 +7,63 @@
 # Store those in .Renviron. usethis::edit_r_environ() opens it for you for editing.
 project_title <- "SDQ"
 gd_url <- "https://drive.google.com/drive/u/1/folders/1ldKRvF225TFJdI09wLsyL0GaOoneKIds"
+
+# better compilation function - auto saves all files in project and if everything OK, opens up the report in Word
+compile_and_open <- function(report, output_dir = 'reports-output') {
+  result <- tryCatch({
+    {
+      rstudioapi::documentSaveAll()
+      rmarkdown::render(report, output_dir = output_dir)
+    }
+  }, error = function(e) {
+    message(
+      "ERROR: Report compilation failed with message:\n----------------------------------------------"
+    )
+    message(e)
+    return("fail")
+  })
+
+  if (result != "fail") {
+    system2("open", result)
+  }
+}
+
+# wrong IDs detection
+spot_weirdos <- function(df, id, var, type) {
+  id <- enquo(id)
+  var <- enquo(var)
+
+  if (type %in% c("unique", "u")) {
+    df %>%
+      group_by(!!id) %>%
+      summarise(n = n_distinct(!!var, na.rm = T)) %>%
+      filter(n > 1) %>%
+      pull(!!id) %>%
+      unique
+  } else if (type %in% c("nonrepeating", "nr")) {
+    df %>%
+      filter(!is.na(!!var)) %>%
+      count(!!id, !!var) %>%
+      filter(n > 1) %>%
+      pull(!!id) %>%
+      unique
+  }
+}
+
+# "superagers" detection
+spot_superagers <- function(df, id, date_var, var) {
+  id <- enquo(id)
+  date_var <- enquo(date_var)
+  var <- enquo(var)
+
+  df %>% group_by(!!id) %>%
+    arrange(!!date_var) %>%
+    nest() %>%
+    mutate(invalid = map(.x = data, .f = ~ diff(eval(
+      parse(text = paste0(".x$", quo_name(var)))
+    )))) %>%
+    select(-data) %>%
+    unnest(invalid) %>%
+    filter(invalid > 1) %>%
+    pull(!!id)
+}

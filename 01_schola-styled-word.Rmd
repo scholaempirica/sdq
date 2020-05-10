@@ -28,6 +28,7 @@ library(lme4)
 library(lmerTest)
 library(broom.mixed)
 library(flextable)
+library(ggeffects)
 library(conflicted)
 conflict_prefer("lmer", "lmerTest")
 conflict_prefer("filter", "dplyr")
@@ -175,7 +176,21 @@ df_long_zero %>%
     col = is_intervention2
   ), data = df_long_zero) +
   geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
-  scale_fill_distiller(palette = "Spectral", direction = -1) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data - fixed effects")
+
+df_long_zero %>%
+  drop_na(ris_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(ris_model)) %>%
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = pro,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
   theme_schola("y") +
   labs(title = "Model a naměřená data")
 ```
@@ -194,5 +209,533 @@ ggplot(aes(level, estimate)) +
   labs(title = "50 náhodně vybraných interceptů")
 ```
 
+```{r}
+ris_model %>% ggpredict()
+```
+
+{marginal plots draft
+
+```{r}
+# CI, fixed eff.
+ris_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl")) %>%
+  plot + theme_schola("scatter")
+
+ris_model %>%
+  ggpredict(terms = c("is_intervention2", "gender_girl", "age_fst_measur [meansd]")) %>% plot + theme_schola("scatter")
+
+# one of the most interesting plots:
+ris_model %>%
+  ggpredict(terms = c("age_fst_measur", "is_intervention2", "wave_ind")) %>%
+  plot + theme_schola("scatter")
+
+# predictiton interval (random effects)
+ris_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl"), type = "re") %>%
+  plot + theme_schola("scatter")
+```
 
 
+
+
+
+
+
+# emo
+
+```{r}
+emo_model <- lmer(emo ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_pupil), data = df_long_zero)
+summary(emo_model)
+
+df_long_zero %>% drop_na(emo_model@frame %>% colnames) %>%
+  mutate(model_residuals = resid(emo_model), pred_vals = predict(emo_model)) %>%
+ggplot(aes(pred_vals, model_residuals)) +
+  geom_point(alpha = .15) +
+  geom_vline(xintercept = 0, col = "red") +
+  geom_hline(yintercept = 0, col = "red") +
+  theme_schola("scatter") +
+  labs(title = "Reziduály fitovaného modelu")
+
+```
+
+
+```{r}
+resid(emo_model) %>%
+  as_tibble %>%
+  mutate(id = 1:n()) %>%
+  ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_schola("scatter") +
+  labs(title = "Q-Q plot reziduálů")
+
+# residuals densities
+df_long_zero %>% drop_na(emo_model@frame %>% colnames) %>%
+  mutate(model_residuals = residuals(emo_model)) %>%
+ggplot(aes(x = model_residuals)) +
+  geom_density(aes(color = is_intervention2), size = 1.25) +
+  xlab("Residuals") +
+  theme_schola("x") +
+  labs(title = "Hustoty reziduálů dle skupiny")
+
+# random effects of id_pupils to long format
+ranef(emo_model)$id_pupil %>%
+  mutate(id = 1:n()) %>%
+  pivot_longer(-id, "variable", "value") %>%
+ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~ variable, scales = 'free_y') +
+  theme_schola("scatter") +
+  labs(title = "Q-Q ploty random efektů")
+
+```
+
+## Vizualizace modelu -- průměry 
+
+```{r}
+df_long_zero %>%
+  drop_na(emo_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(emo_model, re.form = NA)) %>% # fixed eff only
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = emo,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data - fixed effects")
+
+df_long_zero %>%
+  drop_na(emo_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(emo_model)) %>%
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = emo,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data")
+```
+
+## random effect for sample of 50 pupils
+
+```{r}
+#rand effects
+tidy(emo_model, effects = "ran_vals", conf.int = TRUE) %>% sample_n(50) %>% 
+ggplot(aes(level, estimate)) +
+  geom_pointrange(aes(
+    ymin = estimate - 1.96 * std.error,
+    ymax = estimate + 1.96 * std.error
+  )) + coord_flip() +
+  theme_schola("x") +
+  labs(title = "50 náhodně vybraných interceptů")
+```
+
+```{r}
+emo_model %>% ggpredict()
+```
+
+marginal plots draft
+
+```{r}
+# CI, fixed eff.
+emo_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl")) %>%
+  plot + theme_schola("scatter")
+
+emo_model %>%
+  ggpredict(terms = c("is_intervention2", "gender_girl", "age_fst_measur [meansd]")) %>% plot + theme_schola("scatter")
+
+# one of the most interesting plots:
+emo_model %>%
+  ggpredict(terms = c("age_fst_measur", "is_intervention2", "wave_ind")) %>%
+  plot + theme_schola("scatter")
+
+# predictiton interval (random effects)
+emo_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl"), type = "re") %>%
+  plot + theme_schola("scatter")
+```
+
+# con
+
+
+```{r}
+con_model <- lmer(con~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_pupil), data = df_long_zero)
+summary(con_model)
+
+df_long_zero %>% drop_na(con_model@frame %>% colnames) %>%
+  mutate(model_residuals = resid(con_model), pred_vals = predict(con_model)) %>%
+ggplot(aes(pred_vals, model_residuals)) +
+  geom_point(alpha = .15) +
+  geom_vline(xintercept = 0, col = "red") +
+  geom_hline(yintercept = 0, col = "red") +
+  theme_schola("scatter") +
+  labs(title = "Reziduály fitovaného modelu")
+
+```
+
+
+```{r}
+resid(con_model) %>%
+  as_tibble %>%
+  mutate(id = 1:n()) %>%
+  ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_schola("scatter") +
+  labs(title = "Q-Q plot reziduálů")
+
+# residuals densities
+df_long_zero %>% drop_na(con_model@frame %>% colnames) %>%
+  mutate(model_residuals = residuals(con_model)) %>%
+ggplot(aes(x = model_residuals)) +
+  geom_density(aes(color = is_intervention2), size = 1.25) +
+  xlab("Residuals") +
+  theme_schola("x") +
+  labs(title = "Hustoty reziduálů dle skupiny")
+
+# random effects of id_pupils to long format
+ranef(con_model)$id_pupil %>%
+  mutate(id = 1:n()) %>%
+  pivot_longer(-id, "variable", "value") %>%
+ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~ variable, scales = 'free_y') +
+  theme_schola("scatter") +
+  labs(title = "Q-Q ploty random efektů")
+
+```
+
+## Vizualizace modelu -- průměry 
+
+```{r}
+df_long_zero %>%
+  drop_na(con_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(con_model, re.form = NA)) %>% # fixed eff only
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = con,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data - fixed effects")
+
+df_long_zero %>%
+  drop_na(con_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(con_model)) %>%
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = con,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data")
+```
+
+## random effect for sample of 50 pupils
+
+```{r}
+#rand effects
+tidy(con_model, effects = "ran_vals", conf.int = TRUE) %>% sample_n(50) %>% 
+ggplot(aes(level, estimate)) +
+  geom_pointrange(aes(
+    ymin = estimate - 1.96 * std.error,
+    ymax = estimate + 1.96 * std.error
+  )) + coord_flip() +
+  theme_schola("x") +
+  labs(title = "50 náhodně vybraných interceptů")
+```
+
+```{r}
+con_model %>% ggpredict()
+```
+
+marginal plots draft
+
+```{r}
+# CI, fixed eff.
+con_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl")) %>%
+  plot + theme_schola("scatter")
+
+con_model %>%
+  ggpredict(terms = c("is_intervention2", "gender_girl", "age_fst_measur [meansd]")) %>% plot + theme_schola("scatter")
+
+# one of the most interesting plots:
+con_model %>%
+  ggpredict(terms = c("age_fst_measur", "is_intervention2", "wave_ind")) %>%
+  plot + theme_schola("scatter")
+
+# predictiton interval (random effects)
+con_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl"), type = "re") %>%
+  plot + theme_schola("scatter")
+```
+
+# hyp
+
+
+```{r}
+hyp_model <- lmer(hyp ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_pupil), data = df_long_zero)
+summary(hyp_model)
+
+df_long_zero %>% drop_na(hyp_model@frame %>% colnames) %>%
+  mutate(model_residuals = resid(hyp_model), pred_vals = predict(hyp_model)) %>%
+ggplot(aes(pred_vals, model_residuals)) +
+  geom_point(alpha = .15) +
+  geom_vline(xintercept = 0, col = "red") +
+  geom_hline(yintercept = 0, col = "red") +
+  theme_schola("scatter") +
+  labs(title = "Reziduály fitovaného modelu")
+
+```
+
+
+```{r}
+resid(hyp_model) %>%
+  as_tibble %>%
+  mutate(id = 1:n()) %>%
+  ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_schola("scatter") +
+  labs(title = "Q-Q plot reziduálů")
+
+# residuals densities
+df_long_zero %>% drop_na(hyp_model@frame %>% colnames) %>%
+  mutate(model_residuals = residuals(hyp_model)) %>%
+ggplot(aes(x = model_residuals)) +
+  geom_density(aes(color = is_intervention2), size = 1.25) +
+  xlab("Residuals") +
+  theme_schola("x") +
+  labs(title = "Hustoty reziduálů dle skupiny")
+
+# random effects of id_pupils to long format
+ranef(hyp_model)$id_pupil %>%
+  mutate(id = 1:n()) %>%
+  pivot_longer(-id, "variable", "value") %>%
+ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~ variable, scales = 'free_y') +
+  theme_schola("scatter") +
+  labs(title = "Q-Q ploty random efektů")
+
+```
+
+## Vizualizace modelu -- průměry 
+
+```{r}
+df_long_zero %>%
+  drop_na(hyp_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(hyp_model, re.form = NA)) %>% # fixed eff only
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = hyp,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data - fixed effects")
+
+df_long_zero %>%
+  drop_na(hyp_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(hyp_model)) %>%
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = hyp,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data")
+```
+
+## random effect for sample of 50 pupils
+
+```{r}
+#rand effects
+tidy(hyp_model, effects = "ran_vals", conf.int = TRUE) %>% sample_n(50) %>% 
+ggplot(aes(level, estimate)) +
+  geom_pointrange(aes(
+    ymin = estimate - 1.96 * std.error,
+    ymax = estimate + 1.96 * std.error
+  )) + coord_flip() +
+  theme_schola("x") +
+  labs(title = "50 náhodně vybraných interceptů")
+```
+
+```{r}
+hyp_model %>% ggpredict()
+```
+
+marginal plots draft
+
+```{r}
+# CI, fixed eff.
+hyp_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl")) %>%
+  plot + theme_schola("scatter")
+
+hyp_model %>%
+  ggpredict(terms = c("is_intervention2", "gender_girl", "age_fst_measur [meansd]")) %>% plot + theme_schola("scatter")
+
+# one of the most interesting plots:
+hyp_model %>%
+  ggpredict(terms = c("age_fst_measur", "is_intervention2", "wave_ind")) %>%
+  plot + theme_schola("scatter")
+
+# predictiton interval (random effects)
+hyp_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl"), type = "re") %>%
+  plot + theme_schola("scatter")
+```
+
+# pee
+
+
+```{r}
+pee_model <- lmer(pee ~ wave_ind * is_intervention2 + age_fst_measur + gender_girl + (wave_ind | id_pupil), data = df_long_zero)
+summary(pee_model)
+
+df_long_zero %>% drop_na(pee_model@frame %>% colnames) %>%
+  mutate(model_residuals = resid(pee_model), pred_vals = predict(pee_model)) %>%
+ggplot(aes(pred_vals, model_residuals)) +
+  geom_point(alpha = .15) +
+  geom_vline(xintercept = 0, col = "red") +
+  geom_hline(yintercept = 0, col = "red") +
+  theme_schola("scatter") +
+  labs(title = "Reziduály fitovaného modelu")
+
+```
+
+
+```{r}
+resid(pee_model) %>%
+  as_tibble %>%
+  mutate(id = 1:n()) %>%
+  ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_schola("scatter") +
+  labs(title = "Q-Q plot reziduálů")
+
+# residuals densities
+df_long_zero %>% drop_na(pee_model@frame %>% colnames) %>%
+  mutate(model_residuals = residuals(pee_model)) %>%
+ggplot(aes(x = model_residuals)) +
+  geom_density(aes(color = is_intervention2), size = 1.25) +
+  xlab("Residuals") +
+  theme_schola("x") +
+  labs(title = "Hustoty reziduálů dle skupiny")
+
+# random effects of id_pupils to long format
+ranef(pee_model)$id_pupil %>%
+  mutate(id = 1:n()) %>%
+  pivot_longer(-id, "variable", "value") %>%
+ggplot(aes(sample = value)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~ variable, scales = 'free_y') +
+  theme_schola("scatter") +
+  labs(title = "Q-Q ploty random efektů")
+
+```
+
+## Vizualizace modelu -- průměry 
+
+```{r}
+df_long_zero %>%
+  drop_na(pee_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(pee_model, re.form = NA)) %>% # fixed eff only
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = pee,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data - fixed effects")
+
+df_long_zero %>%
+  drop_na(pee_model@frame %>% colnames) %>%
+  mutate(pred_val = predict(pee_model)) %>%
+  group_by(wave_ind, is_intervention2) %>%
+  summarise(pred_mean = mean(pred_val)) %>%
+  ggplot(aes(x = wave_ind)) +
+  geom_boxplot(aes(
+    y = pee,
+    x = as.factor(wave_ind),
+    col = is_intervention2
+  ), data = df_long_zero) +
+  geom_line(aes(y = pred_mean, col = is_intervention2), size = 1.5) +
+  theme_schola("y") +
+  labs(title = "Model a naměřená data")
+```
+
+## random effect for sample of 50 pupils
+
+```{r}
+#rand effects
+tidy(pee_model, effects = "ran_vals", conf.int = TRUE) %>% sample_n(50) %>% 
+ggplot(aes(level, estimate)) +
+  geom_pointrange(aes(
+    ymin = estimate - 1.96 * std.error,
+    ymax = estimate + 1.96 * std.error
+  )) + coord_flip() +
+  theme_schola("x") +
+  labs(title = "50 náhodně vybraných interceptů")
+```
+
+```{r}
+pee_model %>% ggpredict()
+```
+
+marginal plots draft
+
+```{r}
+# CI, fixed eff.
+pee_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl")) %>%
+  plot + theme_schola("scatter")
+
+pee_model %>%
+  ggpredict(terms = c("is_intervention2", "gender_girl", "age_fst_measur [meansd]")) %>% plot + theme_schola("scatter")
+
+# one of the most interesting plots:
+pee_model %>%
+  ggpredict(terms = c("age_fst_measur", "is_intervention2", "wave_ind")) %>%
+  plot + theme_schola("scatter")
+
+# predictiton interval (random effects)
+pee_model %>%
+  ggpredict(terms = c("wave_ind", "is_intervention2", "gender_girl"), type = "re") %>%
+  plot + theme_schola("scatter")
+```

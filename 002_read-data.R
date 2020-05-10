@@ -7,7 +7,7 @@ dfm <- read_csv(here("data-input/SDQ_all_incl_w7.csv"),
                 col_types = cols(.default = col_character()))
 
 # quick check
-dfm %>% glimpse
+# dfm %>% glimpse
 
 # change types - factors
 dfm %<>% mutate(
@@ -36,7 +36,7 @@ dfm %<>% mutate_at(vars(temotion, tconduct, thyper, tpeer, tprosoc), parse_doubl
 dfm %<>% rowid_to_column()
 
 # quick check
-dfm %>% glimpse
+# dfm %>% glimpse
 
 # write to intermediate data folder in RDS
 dfm %>% write_rds(here("data-intermediate/waves_1-7.rds"))

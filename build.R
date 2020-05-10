@@ -3,11 +3,15 @@
 # it contains the commands needed to rebuild the whole project from scratch.
 # Typically, those will be source() or rmarkdown::render() calls, like below.
 
+library(here)
+if (!require(buildr)) remotes::install_github("netique/buildr")
+source("shared.R") # GDrive url & custom functions
 
 source('002_read-data.R')
-source('003_check-and-process-data.R')
-rmarkdown::render('01_schola-styled-word.Rmd', output_dir = 'reports-output')
-# rmarkdown::render('02_schola-styled-redoc.Rmd', output_dir = 'reports-output')
+# better run it manually (long IRT fitting)
+# source('003_check-and-process-data.Rmd')
+compile_and_open('01_schola-styled-word.Rmd')
+# compile_and_open('02_schola-styled-redoc.Rmd')
 rmarkdown::render('99_reproducibility.Rmd', output_dir = 'reports-output')
 
 

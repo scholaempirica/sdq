@@ -453,18 +453,19 @@ thetas <- map(
   ) %>% as_tibble %>% bind_cols(.x[, 1], .) # append rowids
 )
 
+# in R 4.0 theres is no need to renam??
 # rename and turn list into tibble
 thetas_tbl <-
   map_dfr(
     thetas,
-    ~ .x %>% select(rowid, F1:F5) %>% rename(
-      "emo" = F1,
-      "con" = F2,
-      "hyp" = F3,
-      "pee" = F4,
-      "pro" = F5
+    ~ .x %>% select(rowid, emo:pro) #%>% rename(
+      # "emo" = F1,
+      # "con" = F2,
+      # "hyp" = F3,
+      # "pee" = F4,
+      # "pro" = F5
     )
-  )
+  
 
 # combine with thetas estimates, save it to the main dataset
 dfm <- thetas_tbl %>% left_join(dfm, ., by = "rowid")
