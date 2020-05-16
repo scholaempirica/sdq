@@ -453,22 +453,20 @@ thetas <- map(
   ) %>% as_tibble %>% bind_cols(.x[, 1], .) # append rowids
 )
 
-# in R 4.0 theres is no need to renam??
-# rename and turn list into tibble
+# in new mirt (or possibly R), dimensions' names are kept in fitted model
+# turn list into tibble
 thetas_tbl <-
-  map_dfr(
-    thetas,
-    ~ .x %>% select(rowid, emo:pro) #%>% rename(
-      # "emo" = F1,
-      # "con" = F2,
-      # "hyp" = F3,
-      # "pee" = F4,
-      # "pro" = F5
-    )
-  
+  map_dfr(thetas,
+          ~ .x %>% select(rowid, emo:pro))
 
 # combine with thetas estimates, save it to the main dataset
 dfm <- thetas_tbl %>% left_join(dfm, ., by = "rowid")
+```
+
+# Export fitted IRT model
+
+```{r}
+mirt_fit %>% write_rds(here("data-processed/irt_sdq_model.rds"))
 ```
 
 Much better! For now on, we work with *theta* estimates.
@@ -525,7 +523,10 @@ time_dependency <- function(df, dim, method = "pearson") {
     names_from = wave_ind,
     values_from = !!dim,
     names_prefix = paste0(str_extract(prefix, "[:alpha:]+"), "_")
-  ) %>% select(-id_pupil) %>% corrr::correlate(method = method) %>% corrr::shave(upper = FALSE) %>% corrr::fashion()
+  ) %>% select(-id_pupil) %>%
+    corrr::correlate(method = method) %>%
+    corrr::shave(upper = FALSE) %>%
+    corrr::fashion()
 }
 
 map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman"))

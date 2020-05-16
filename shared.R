@@ -7,6 +7,7 @@
 # Store those in .Renviron. usethis::edit_r_environ() opens it for you for editing.
 project_title <- "SDQ"
 gd_url <- "https://drive.google.com/drive/u/1/folders/1ldKRvF225TFJdI09wLsyL0GaOoneKIds"
+irt_models <- "https://drive.google.com/drive/folders/13a5NBhU22rlOG2zgBQjhK0AAP18IxT8g"
 
 # better compilation function - auto saves all files in project and if everything OK, opens up the report in Word
 compile_and_open <- function(report, output_dir = 'reports-output') {
