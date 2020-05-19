@@ -7,10 +7,10 @@ library(here)
 if (!require(buildr)) remotes::install_github("netique/buildr")
 source("shared.R") # GDrive url & custom functions
 
-source('002_read-data.R')
+# source('002_read-data.R')
 # better run it manually (long IRT fitting)
 # source('003_check-and-process-data.Rmd')
-compile_and_open('01_schola-styled-word.Rmd')
+compile_and_open('01_report.Rmd')
 # compile_and_open('02_schola-styled-redoc.Rmd')
 rmarkdown::render('99_reproducibility.Rmd', output_dir = 'reports-output')
 
