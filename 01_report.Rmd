@@ -15,7 +15,6 @@ abstract: Lorem ipsum abstract
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(include = T) 
-
 options(scipen = 10) # force R to show full numbers, not scientific notation
 
 library(reschola)
@@ -35,7 +34,7 @@ conflict_prefer("lmer", "lmerTest")
 conflict_prefer("filter", "dplyr")
 ```
 
-```{r}
+```{r data import}
 dfm <- read_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
 ```
 

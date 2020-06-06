@@ -30,6 +30,7 @@ compile_and_open <- function(report, output_dir = 'reports-output') {
 }
 
 # wrong IDs detection
+if (packageVersion("dplyr") < 1) {
 spot_weirdos <- function(df, id, var, type) {
   id <- enquo(id)
   var <- enquo(var)
@@ -50,6 +51,32 @@ spot_weirdos <- function(df, id, var, type) {
       unique
   }
 }
+} else {
+  # wrong IDs detection for dplyr 1++++
+  spot_weirdos <- function(df, id, var, type) {
+    id <- enquo(id)
+    var <- enquo(var)
+
+    if (type %in% c("unique", "u")) {
+      df %>%
+        group_by(!!id) %>%
+        summarise(
+          across(!!var, dplyr::n_distinct, na.rm = T)) %>%
+        filter(!!var > 1) %>%
+        pull(!!id) %>%
+        unique
+    } else if (type %in% c("nonrepeating", "nr")) {
+      df %>%
+        filter(!is.na(!!var)) %>%
+        count(!!id, !!var) %>%
+        filter(n > 1) %>%
+        pull(!!id) %>%
+        unique
+    }
+  }
+}
+
+
 
 # "superagers" detection
 spot_superagers <- function(df, id, date_var, var) {

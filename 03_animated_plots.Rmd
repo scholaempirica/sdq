@@ -1,0 +1,78 @@
+---
+title: "Animated plots"
+author: "Jan Netík"
+date: "6 6 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+options(scipen = 10) # force R to show full numbers, not scientific notation
+options("OutDec" = ",") # Czech decimal mark
+
+library(reschola)
+library(tidyverse)
+library(magrittr)
+library(scales)
+library(naniar)
+source("shared.R")
+set_reschola_ggplot_fonts() # make ggplot2 use Roboto fonts without you having to set it
+library(here)
+library(gganimate)
+library(transformr)
+library(corrr)
+library(officer)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(flextable)
+library(ggeffects)
+library(conflicted)
+conflict_prefer("lmer", "lmerTest")
+conflict_prefer("filter", "dplyr")
+```
+
+```{r}
+load(here("data-intermediate/envir.RData"))
+```
+
+```{r}
+# jawdropping plot in motion
+sdq_dist_anim <- dfm %>% group_by(wave) %>% 
+  drop_na(gender_girl) %>%
+  select(id_pupil, gender_girl, is_intervention2, contains("10")) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(value, fill = gender_girl)) +
+  geom_bar(position = "dodge2") +
+  scale_fill_discrete(name = "pohlaví", labels = gender_labs) +
+  facet_wrap(~ name, labeller = labeller(name = ctt_dim_labs)) +
+  theme_schola(legend.position = "bottom", multiplot = TRUE) +
+  transition_states(wave, transition_length = 3, state_length = 3, wrap = FALSE) +
+   ease_aes('cubic-in-out') +
+  labs(title = fig_counter("Rozložení dimenzí SDQ v čase - vlna {closest_state}"))
+
+anim_save("sdq_dist_anim.gif", animation = sdq_dist_anim, path = here("data-processed"))
+```
+
+```{r}
+# IRT SDQ animated
+sdq_irt_dist_anim <- dfm %>%
+  drop_na(gender_girl) %>% group_by(wave_ind) %>%
+  select(id_pupil, gender_girl, is_intervention2, emo:pro) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(value, col = gender_girl)) +
+  geom_density() +
+  scale_color_discrete(name = "pohlaví", labels = gender_labs) +
+  facet_wrap(~ name, nrow = 2, labeller = labeller(name = dim_labs)) +
+  labs(title = fig_counter("SDQ - odhady latentních skórů v čase - individuální vlna {closest_state}"),
+       subtitle = "členěno dle jednotlivých dimenzí a pohlaví") +
+  theme_schola("x",
+               multiplot = TRUE,
+               legend.position = c(.825, 0.25)) +
+     ease_aes('cubic-in-out') +
+  transition_states(wave_ind)
+
+anim_save("sdq_irt_dist_anim.gif", animation = sdq_irt_dist_anim, path = here("data-processed"))
+```
+

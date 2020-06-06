@@ -21,6 +21,7 @@ See `002_read-date.R` for details. Using `here` package already loaded before, w
 Also, solve the packages namespace conflict problem. Package `conflicted` from *tidyverse* does the job nice and clean. Another option is to "rewrite" the function, e.g. `select <- dplyr::select`.
 
 ```{r}
+source("shared.R")
 library(assertr)
 library(conflicted)
 library(corrr)
@@ -222,24 +223,30 @@ dfm %>% count(
 Impact of cleaning by **WAVE_IND** (measurement)
 
 ```{r}
-dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>%
+cleaning_impact_wave_ind <- dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>%
   count(wave_ind) %>%
   left_join(dfm %>% count(wave_ind), ., by = "wave_ind") %>%
   mutate(diff = n.x - n.y, "% lost" = ((1 - (n.y / n.x)) * 100)) %>%
   rename("# raw" = 2,
          "# cleaned" = 3,
          "# lost" = 4)
+
+cleaning_impact_wave_ind
+cleaning_impact_wave_ind %>% write_csv("data-processed/cleaning_impact_wave_ind.csv")
 ```
 
 Impact of cleaning impact by **WAVE**
 
 ```{r}
-dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>% count(wave) %>%
+cleaning_impact_wave <- dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>% count(wave) %>%
   left_join(dfm %>% count(wave), ., by = "wave") %>%
   mutate(diff = n.x - n.y, "% lost" = ((1 - (n.y / n.x)) * 100)) %>%
   rename("# raw" = 2,
          "# cleaned" = 3,
-         "# lost" = 4) 
+         "# lost" = 4)
+
+cleaning_impact_wave
+cleaning_impact_wave %>% write_csv("data-processed/cleaning_impact_wave.csv")
 ```
 
 ### Cases with nonconsecutive measurment
@@ -426,7 +433,13 @@ pro = 21-25
 COV = emo*con*hyp*pee*pro
 "
 mirtCluster(4) # use 4  cores
-mirt_fit <- mirt(df_mirt[, -1], mirt_model, "graded", SE = FALSE, method = "MHRM")
+mirt_fit <-
+  mirt(df_mirt[,-1],
+       mirt_model,
+       "graded",
+       SE = FALSE,
+       method = "MHRM",
+       technical = list(removeEmptyRows = TRUE))
 
 # summary(mirt_fit)
 # coef(mirt_fit, simplify = TRUE)
