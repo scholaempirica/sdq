@@ -140,7 +140,7 @@ dfm %<>% left_join(wave_rank)
 
 However, to my knowledge and for our purposes, `assertr` nor any other "validating" package can spot IDs changing gender, birthday nor "messed-up" IDs referring to multiple subjects. Thus, there is a need to write proprietary functions as follows.
 
-```{r}
+```{r eval=FALSE, include=TRUE}
 spot_weirdos <- function(df, id, var, type) {
   id <- enquo(id)
   var <- enquo(var)
@@ -281,7 +281,7 @@ noncosecutives %>% select(id_pupil, wave_ind_presumed, wave_ind_actual) %>% samp
 For now on, we work with *clean* dataset only. It could be changed via editing  this filter:
 
 ```{r}
-dfm %<>% filter(invalid_case == FALSE)
+dfm %<>% filter_at(vars(contains("invalid")), all_vars(. == FALSE))
 ```
 
 ## Auxiliary/derived variable *after* filtering

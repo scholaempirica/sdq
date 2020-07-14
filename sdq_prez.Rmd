@@ -1,0 +1,679 @@
+---
+title: "SDQ"
+subtitle: "vyhodnocení 7. vlny"
+output:
+  powerpoint_presentation:
+    slide_level: 4
+    reference_doc: template.pptx
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  dpi = 400,
+  out.width = 9,
+  out.height = 5.409448818897638,
+  fig.asp = 0.6010499,
+  fig.width = 5
+)
+
+options(scipen = 10) # force R to show full numbers, not scientific notation
+options("OutDec" = ",") # Czech decimal mark
+
+knitr::knit_hooks$set(
+  inline = function(x) {
+    if (!is.character(x)) {
+      prettyNum(x, big.mark = " ")
+    } else {
+      x
+    }
+  }
+)
+
+
+# fig. numbering
+fig_count = 0
+
+fig_counter <- function(title = "default title") {
+  fig_count <<- fig_count + 1
+  return(paste0("Graf ", fig_count, ": ", title))
+}
+
+library(reschola)
+library(here)
+library(tidyverse)
+library(magrittr)
+library(scales)
+library(knitr)
+library(naniar)
+source("shared.R")
+set_reschola_ggplot_fonts() # make ggplot2 use Roboto fonts without you having to set it
+library(gganimate)
+library(transformr)
+library(corrr)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(ggeffects)
+
+lmer <- lmerTest::lmer
+filter <- dplyr::filter
+here <- here::here
+
+```
+
+
+```{r}
+dim_labs <- c("emoce", "chování", "hyperaktivita", "vrstevníci", "prosociální")
+names(dim_labs) = c("emo", "con", "hyp", "pee", "pro")
+
+gender_labs <- c("dívky", "chlapci")
+names(gender_labs) = c("girls", "boys")
+
+intervention_labs <- c("kontrolní", "intervenční")
+names(intervention_labs) = c("control", "experimental")
+
+sel_age_labs <- paste0("vstupní věk = ", 3:7)
+names(sel_age_labs) <- c(3:7)
+```
+
+```{r data import}
+dfm <- read_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
+```
+
+```{r include=FALSE}
+# from zscores to sten (0-10 scale), 5.5is the mean score of "normative" group (SDQ)
+dfm %<>% mutate_at(vars(emo:pro), list(~ (. * 2) + 5))
+```
+
+```{r}
+min_date <- dfm %>% filter(wave == 7) %>% pull(fill_in_date) %>% lubridate::ymd() %>% min(na.rm = T) %>% format("%d. %m. %Y") %>% as.character() %>% str_remove("^0")
+max_date <- dfm %>% filter(wave == 7) %>% pull(fill_in_date) %>% lubridate::ymd() %>% max(na.rm = T) %>% format("%d. %m. %Y") %>% as.character() %>% str_remove("^0")
+child_n <- dfm %>% pull(id_pupil) %>% n_distinct
+
+child_n_ind <-
+  dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>%
+  count(wave_ind) %>% filter(wave_ind == 6) %>% pull(n)
+```
+
+
+
+#### Úvod
+
+- ze  7. vlny máme záznamy od `r min_date` do `r max_date`
+- alespoň jedním měřením prošlo doposud `r child_n` dětí
+  - všemi 6 vlnami (současné maximum) prošlo `r child_n_ind` dětí
+- relativně **velké ztráty díky chybám v udělování ID kódů** (jedno ID je přiděleno více dětem)
+  - třeba tomuto věnovat zvýšenou pozornost, jinak několik vyplnění dotazníků přijde vniveč -- tzn. zvýšené úsilí se vyplatí
+- již 3. vlnou probíhá náběr dětí do kontrolní skupiny
+  - možnost lépe ověřit efekt intervence
+  - sledujeme tzv. interakci skupiny a vlny měření, tj. „mění se intervenční skupina oproti kontrolní jinak?“
+  
+---
+
+```{r, fig.cap=fig_counter("Vývoj počtu dětí v rámci jednotlivých vln studie")}
+dfm %>% group_by(is_intervention2, wave) %>% 
+  summarize(n_dist = n_distinct(id_pupil), n = n()) %>% 
+  ggplot(aes(wave, n_dist, col = is_intervention2)) + 
+  geom_line() + 
+  geom_point() +
+  theme_schola(legend.position = "bottom", legend.title = element_blank()) + 
+  scale_color_discrete(labels = intervention_labs) +
+  scale_x_continuous(breaks = seq(1, max(dfm$wave))) +
+  scale_y_continuous(n.breaks = 7) +
+  coord_cartesian(ylim = c(0, 850))
+
+```
+
+#### Globální × individuální vlna
+
+- globální vlna se vztahuje k vlně sběru v daném časovém rámci
+- individuální vlna hovoří o *konkrétním měření konkrétního dítěte* (tzn. 2. ind. vlna je v pořadí 2. měření daného dítete)
+
+
+#### Dopad validace dat -- globální vlny
+
+
+```{r message=FALSE}
+read_csv(here("data-processed/cleaning_impact_wave.csv")) %>%
+  mutate(`% lost` = scales::percent(`% lost`/100, suffix = " %", accuracy = .1, decimal.mark = ",")) %>% 
+  kable(
+    col.names = c(
+      "glob. vlna" ,
+      "poč. obs. před",
+      "poč. obs. po",
+      "poč. ztrac. obs.",
+      "pod. ztrac. obs."
+    ), format.args = list(big.mark = " ")
+)
+```
+
+
+#### Dopad validace dat -- individuální vlny
+
+```{r message=FALSE}
+read_csv(here("data-processed/cleaning_impact_wave_ind.csv")) %>%
+  mutate(`% lost` = scales::percent(`% lost`/100, suffix = " %", accuracy = .1, decimal.mark = ",")) %>% 
+  kable(
+    col.names = c(
+      "ind. vlna" ,
+      "poč. obs. před",
+      "poč. obs. po",
+      "poč. ztrac. obs.",
+      "pod. ztrac. obs."
+    ), format.args = list(big.mark = " ")
+)
+
+```
+
+#### Strengths and Difficulties Questionnaire
+
+![](sdq_dimensions.png)
+
+
+#### Strengths and Difficulties Questionnaire
+
+- 0–10 bodů za každou dimenzi
+- první čtyři jsou *negativně formulované,* chceme vidět pokles (na následujících snímcích konkrétně pohyb doleva), pátá je *pozitivní*, chceme vidět růst
+- následující grafy jsou animované, „aktuální“ ind. vlna je k vidění vpravo dole
+
+
+# Vývoj v čase
+
+
+```{r}
+ctt_dim_labs <- c("emoce", "chování", "hyperaktivita", "vrstevníci", "prosociální")
+names(ctt_dim_labs) = c("temotion10", "tconduct10", "thyper10", "tpeer10", "tprosoc10")
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# 7th wave
+dfm %>% filter(wave == 7) %>% 
+  drop_na(gender_girl) %>%
+  select(id_pupil, gender_girl, is_intervention2, contains("10")) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(value, fill = gender_girl)) +
+  geom_bar(position = "dodge2") +
+  scale_fill_discrete(name = "pohlaví", labels = gender_labs) +
+  facet_wrap(~ name, labeller = labeller(name = ctt_dim_labs)) +
+  theme_schola(multiplot = TRUE, legend.position = c(.825, 0.250))
+```
+
+
+---
+
+```{r, fig.cap=fig_counter("Rozložení skórů SDQ v čase (dle pohlaví)")}
+include_graphics("data-processed/sdq_dist_anim_prez.gif")
+```
+
+
+#### Analýza latentních skórů
+
+- předchozí graf zobrazoval prosté součty jednotlivých položek, jak je uvedeno v manuálu k SDQ
+- pro naše analýzy je takové měřítko *nevyhovující*
+- využíváme moderního psychometrického paradigmatu, které umožňuje odhadnout úroveň psychologického konstruktu, který nás zajímá *(hyperaktivita, prosociálnost atp.)*
+- následující graf zobrazuje tyto, tzv. **latentní skóry** daných dimenzí SDQ, které jsou v populaci rozložené podobně jako např. výška nebo váha
+- **v čase je vidět posun rozložení jednotlivých dimenzí k více žádoucím hodnotám** (pokles prvních 4 a růst 5. dimenze)
+
+---
+
+```{r, fig.cap=fig_counter("Rozložení latentních skórů SDQ v čase (dle pohlaví)")}
+include_graphics("data-processed/sdq_irt_dist_anim_prez.gif")
+```
+
+
+---
+
+```{r, fig.cap=fig_counter("Rozložení latentních skórů SDQ v čase (dle skupiny)")}
+include_graphics("data-processed/sdq_irt_dist_anim_group_prez.gif")
+```
+
+```{r}
+wave_labs <- paste0(seq(1, max(dfm$wave)), ". vlna")
+names(wave_labs) = seq(1, max(dfm$wave))
+
+wave_ind_labs <- paste0(seq(1, max(dfm$wave_ind)), ". vlna")
+names(wave_ind_labs) = seq(1, max(dfm$wave_ind))
+```
+
+
+
+```{r }
+# more "ergonomic" key variable names 
+dfmod <- dfm %>%
+  mutate(
+    wave = factor(wave_ind),
+    group = factor(is_intervention2, labels = intervention_labs),
+    child = id_pupil,
+    gender = factor(gender_girl, labels = gender_labs),
+    age = age_fst_measur,
+    class = id_class,
+    school = id_school,
+    teacher = id_teach_unq
+  ) %>%
+  select(wave,
+         group,
+         child,
+         gender,
+         age,
+         class,
+         school,
+         teacher,
+         emo:pro,
+         ends_with("10"),
+         region
+         ) %>%
+  filter(wave %in% c(1:3))
+
+# WARNING! because control group has only 3 possible measurements so far,
+# interaction between wave and group cannot be estimated for the other waves
+# however, it is possible to treat wave as numeric and get simple predictions
+# of all remaining "levels"
+# the other way is to throw the waves out and work with MM/YYYY times
+
+
+# interactions between wave, group, gender and/or age was tested insignificant,
+# we keep them as simple covariates
+
+mod <-
+  tibble(dim = names(dim_labs),
+         model = map(dim, ~ lmer(
+           paste(., "~ wave * group + age + gender + (1 | teacher / child)"),
+           dfmod
+         )))
+```
+
+
+```{r }
+#### by regions -- added region to interaction
+mod_reg <-
+  tibble(dim = names(dim_labs),
+         model = map(dim, ~ lmer(
+           paste(., "~ wave * group * region + age + gender + (1 | teacher / child)"),
+           dfmod %>% filter(child %in% {
+             dfmod %>% dplyr::count(region, child) %>% filter(!n %in% 1:2) %>% pull(child)
+           })
+         )))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# sign. interactions sorted by abs eff. size
+map2_dfr(mod_reg$model,
+         mod_reg$dim,
+         ~ .x %>% tidy %>% add_column(.before = 1, dim = .y)) %>% 
+  filter(p.value <= .05 & str_detect(term, ":")) %>% 
+  arrange(desc(abs(estimate)))
+```
+
+
+```{r }
+# sign. interactions sorted by abs eff. size
+coefs_tab <- map2_dfr(mod$model,
+         mod$dim,
+         ~ .x %>% tidy %>% add_column(.before = 1, dim = .y)) %>% 
+    filter(p.value <= .05 & str_detect(term, ":"))
+
+es_vals2 <- coefs_tab %>% filter(str_detect(term, "2")) %>% pull(estimate) %>% abs
+es_vals3 <- coefs_tab %>% filter(str_detect(term, "3")) %>% pull(estimate) %>% abs
+
+esizes <- NULL
+esizes$min2 <- min(es_vals2) %>% round(2)
+esizes$max2 <- max(es_vals2) %>% round(2)
+esizes$med2 <- median(es_vals2) %>% round(2)
+
+esizes$min3 <- min(es_vals3) %>% round(2)
+esizes$max3 <- max(es_vals3) %>% round(2)
+esizes$med3 <- median(es_vals3) %>% round(2)
+
+```
+
+
+```{r }
+marg_plot_main <- function(model_num)
+{ggpredict(mod$model[[model_num]], c("wave", "group", "gender")) %>%
+    ggplot(
+      aes(
+        x,
+        predicted,
+        group = group,
+        col = group,
+        ymin = conf.low,
+        ymax = conf.high
+      )
+    ) +
+    geom_point(position = position_dodge(.2), size = 1) +
+    geom_errorbar(
+      position = position_dodge(.2),
+      width = .2,
+      size = .5
+    ) +
+    geom_line(size = .5, position = position_dodge(.2)) +
+    facet_wrap( ~ facet) +
+    theme_schola(
+      multiplot = TRUE,
+      legend.position = "bottom",
+      legend.title = element_blank()
+      ) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+    scale_x_discrete(labels = wave_ind_labs[1:3]) +
+    labs(caption = "se statisticky kontrolovaným vlivem věku"
+    )
+}
+```
+
+
+# Srovnání vývoje skupin
+
+#### Inferenční statistika
+
+- děti v intervenční skupině se vyvíjely statisticky významně **lépe ve všech dimenzích SDQ**, a to již v druhé ind. vlně (na hladině $\alpha = 0,05$)
+- ve srovnání se stavem v první ind. vlně byl zaznamenán lepší vývoj **i ve vlně třetí**
+- absolutní velikost efektů se pohybuje při srovnání 1. a 2. ind. vlny od `r esizes$min2` do `r esizes$max2`, s medianem `r esizes$med2`
+- při srovnání 1. a 3. ind. vlny od `r esizes$min3` do `r esizes$max3`, s medianem `r esizes$med3`, pozitivní vývoj tedy stabilně pokračoval
+
+
+```{r, fig.cap=fig_counter("Emoce – vývoj v čase")}
+marg_plot_main(1)
+```
+
+```{r, fig.cap=fig_counter("Chování – vývoj v čase")}
+marg_plot_main(2)
+```
+
+```{r, fig.cap=fig_counter("Hyperaktivita – vývoj v čase")}
+marg_plot_main(3)
+```
+
+```{r, fig.cap=fig_counter("Vrstevníci – vývoj v čase")}
+marg_plot_main(4)
+```
+
+```{r, fig.cap=fig_counter("Prosociální – vývoj v čase")}
+marg_plot_main(5)
+```
+
+
+```{r}
+# age
+marg_plot_age <- function(mod_num) {
+  ggpredict(mod$model[[mod_num]], terms = c("gender", "group", "age [3:7, by = 2]")) %>%
+  ggplot(aes(
+    x,
+    predicted,
+    group = group,
+    col = group,
+    ymin = conf.low,
+    ymax = conf.high
+  )) +
+  geom_point(position = position_dodge(.2), size = 1) +
+  geom_errorbar(position = position_dodge(.2),
+                width = .2,
+                size = .5) +
+  facet_wrap(~ facet, labeller = labeller(facet = sel_age_labs)) +
+  theme_schola(
+    multiplot = TRUE,
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+  labs(caption = "se statisticky kontrolovaným vlivem ind. vlny")
+}
+
+```
+
+```{r, fig.cap=fig_counter("Emoce – hodnoty při různých úrovních vtupního věku dle modelu")}
+marg_plot_age(1)
+```
+
+```{r, fig.cap=fig_counter("Chování – hodnoty při různých úrovních vtupního věku dle modelu")}
+marg_plot_age(2)
+```
+
+```{r, fig.cap=fig_counter("Hyperaktivita – hodnoty při různých úrovních vtupního věku dle modelu")}
+marg_plot_age(3)
+```
+
+```{r, fig.cap=fig_counter("Vrstevníci – hodnoty při různých úrovních vtupního věku dle modelu")}
+marg_plot_age(4)
+```
+
+```{r, fig.cap=fig_counter("Prosociální – hodnoty při různých úrovních vtupního věku dle modelu")}
+marg_plot_age(5)
+```
+
+
+```{r}
+# one of the most interesting plots:
+marg_plot_corr <- function(mod_num) {
+  ggpredict(mod$model[[mod_num]], terms = c("age", "group", "wave")) %>%
+    ggplot(aes(
+      x,
+      predicted,
+      group = group,
+      col = group,
+      ymin = conf.low,
+      ymax = conf.high
+    )) +
+    geom_line(size = .5) +
+    geom_ribbon(aes(fill = group), alpha = .375, linetype = 0) +
+    facet_wrap( ~ facet, labeller = labeller(facet = wave_ind_labs)) +
+    theme_schola(
+      multiplot = TRUE,
+      legend.position = "bottom",
+      legend.title = element_blank()
+    ) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+    labs(caption = "se statisticky kontrolovaným vlivem pohlaví")
+}
+```
+
+
+```{r, fig.cap=fig_counter("SDQ – emoce – asociace vstupního věku a dimenze dle individuálních vln")}
+marg_plot_corr(1)
+```
+
+```{r, fig.cap=fig_counter("SDQ – chování – asociace vstupního věku a dimenze dle individuálních vln")}
+marg_plot_corr(2)
+```
+
+```{r, fig.cap=fig_counter("SDQ – hyperaktivita – asociace vstupního věku a dimenze dle individuálních vln")}
+marg_plot_corr(3)
+```
+
+```{r, fig.cap=fig_counter("SDQ – vrstevníci – asociace vstupního věku a dimenze dle individuálních vln")}
+marg_plot_corr(4)
+```
+
+```{r, fig.cap=fig_counter("SDQ – prosociální – asociace vstupního věku a dimenze dle individuálních vln")}
+marg_plot_corr(5)
+```
+
+
+
+```{r fig.cap=fig_counter("Srovnání regionů (hodnoty dle modelu, ceteris paribus)")}
+quiet(map2_dfr(
+  mod_reg$model,
+  mod_reg$dim,
+  ~ .x %>%
+    ggpredict("region") %>%
+    add_column(.before = 1, dim = .y)
+)) %>%
+  ggplot(aes(x, predicted, col = dim, group = dim)) +
+  geom_point(size = 1) +
+  geom_line() +
+  scale_color_discrete(labels = dim_labs) +
+  guides(col = guide_legend(title = "dimenze")) +
+  coord_cartesian(ylim = c(0, 10)) +
+  theme_schola("y")
+```
+
+
+```{r}
+
+# summarySEwithin(
+#   dfm,
+#   "temotion10",
+#   betweenvars = "is_intervention2",
+#   withinvars = "wave_ind",
+#   na.rm = T,
+#   idvar = "id_pupil"
+# ) %>%
+#   ggplot(
+#     aes(
+#       wave_ind,
+#       temotion10_norm,
+#       ymin = temotion10_norm - ci, # normed means
+#       ymax = temotion10_norm + ci,
+#       col = is_intervention2,
+#       group = is_intervention2
+#     )
+#   ) + geom_line() + geom_errorbar() + geom_point()
+by_reg <- function(dim) {
+
+  dfm %>% filter(id_pupil %in% {
+  dfm %>% dplyr::count(region, id_pupil) %>% filter(!n %in% 1:2) %>% pull(id_pupil)
+}) %>%
+  summarySEwithin(
+    dim,
+    betweenvars = c("is_intervention2", "region"),
+    withinvars = "wave_ind",
+    na.rm = T,
+    idvar = "id_pupil"
+  ) %>% dplyr::rename(val = dim) %>% 
+  ggplot(
+    aes(
+      wave_ind,
+      val,
+      ymin = val - ci,
+      ymax = val + ci,
+      group = interaction(region, is_intervention2),
+      col = region,
+      linetype = is_intervention2
+    )
+  ) + geom_line(position = position_dodge2(.75, "single", 0)) +
+  scale_linetype_manual(values = c("twodash", "solid"), labels = intervention_labs) +
+  geom_errorbar(width = .75, position = position_dodge2(.75, "single", 0)) +
+  geom_point(position = position_dodge2(.75, "single", 0), size = 1) 
+}
+
+
+# w/o errorbars
+
+# dfm %>% filter(id_pupil %in% {
+#   dfm %>% dplyr::count(region, id_pupil) %>% filter(!n %in% 1:2) %>% pull(id_pupil)
+# }) %>%
+#   ggplot(aes(wave_ind, temotion10, col = region, linetype = fct_rev(is_intervention2))) +
+#   stat_summary(fun = mean, geom = "line", size = .5) +
+#   stat_summary(fun = mean, geom = "point", size = 1) +
+#   theme_schola("scatter") +
+#   guides(linetype = guide_legend(title = "skupina"))
+```
+
+```{r, fig.cap=fig_counter("Emoce – Srovnání vývoje obou skupin podle regionu (hrubé skóry)")}
+# "temotion10" "tconduct10" "thyper10"   "tpeer10"    "tprosoc10" 
+by_reg("temotion10") +
+  theme_schola(
+    "scatter",
+    legend.position = c(0.5, .75),
+    legend.margin = margin(-.33, .33, 0, 0, unit = "cm"),
+    legend.box = "horizontal",
+    legend.title.align =  .5
+  ) +
+  scale_y_continuous(limits = c(-.1, 10), breaks = seq(0, 10, 1)) +
+  guides(linetype = guide_legend(title = "skupina", order = 1, labels = labeller(intervention_labs)),
+         col = guide_legend(byrow = TRUE, nrow = 1)) +
+  coord_cartesian(
+    ylim = c(-.25, 10.1),
+    xlim = c(.41, max(dfm$wave_ind)) + .1,
+    expand = F
+  )
+
+```
+
+```{r, fig.cap=fig_counter("Chování – srovnání vývoje obou skupin podle regionu (hrubé skóry)")}
+# "temotion10" "tconduct10" "thyper10"   "tpeer10"    "tprosoc10" 
+by_reg("tconduct10") +
+  theme_schola(
+    "scatter",
+    legend.position = c(0.5, .75),
+    legend.margin = margin(-.33, .33, 0, 0, unit = "cm"),
+    legend.box = "horizontal",
+    legend.title.align =  .5
+  ) +
+  scale_y_continuous(limits = c(-.2, 10), breaks = seq(0, 10, 1)) +
+  guides(linetype = guide_legend(title = "skupina", order = 1, labels = labeller(intervention_labs)),
+         col = guide_legend(byrow = TRUE, nrow = 1)) +
+  coord_cartesian(
+    ylim = c(-.25, 10.1),
+    xlim = c(.41, max(dfm$wave_ind)) + .1,
+    expand = F
+  )
+
+```
+
+```{r, fig.cap=fig_counter("Hyperaktivita – srovnání vývoje obou skupin podle regionu (hrubé skóry)")}
+by_reg("thyper10") +
+  theme_schola(
+    "scatter",
+    legend.position = c(0.6, .82),
+    legend.margin = margin(-.33, .33, 0, 0, unit = "cm"),
+    legend.box = "horizontal",
+    legend.title.align =  .5
+  ) +
+  scale_y_continuous(limits = c(-.1, 10), breaks = seq(0, 10, 1)) +
+  guides(linetype = guide_legend(title = "skupina", order = 1, labels = labeller(intervention_labs), nrow = 1),
+         col = guide_legend(byrow = TRUE, nrow = 2)) +
+  coord_cartesian(
+    ylim = c(-.25, 10.1),
+    xlim = c(.41, max(dfm$wave_ind)) + .1,
+    expand = F
+  )
+
+```
+
+```{r, fig.cap=fig_counter("Vrstevníci – Srovnání vývoje obou skupin podle regionu (hrubé skóry)")}
+# "temotion10" "tconduct10" "thyper10"   "tpeer10"    "tprosoc10" 
+by_reg("tpeer10") +
+  theme_schola(
+    "scatter",
+    legend.position = c(0.5, .75),
+    legend.margin = margin(-.33, .33, 0, 0, unit = "cm"),
+    legend.box = "horizontal",
+    legend.title.align =  .5
+  ) +
+  scale_y_continuous(limits = c(-.1, 10), breaks = seq(0, 10, 1)) +
+  guides(linetype = guide_legend(title = "skupina", order = 1, labels = labeller(intervention_labs)),
+         col = guide_legend(byrow = TRUE, nrow = 1)) +
+  coord_cartesian(
+    ylim = c(-.25, 10.1),
+    xlim = c(.41, max(dfm$wave_ind)) + .1,
+    expand = F
+  )
+
+```
+
+```{r, fig.cap=fig_counter("Prosociální – Srovnání vývoje obou skupin podle regionu (hrubé skóry)")}
+# "temotion10" "tconduct10" "thyper10"   "tpeer10"    "tprosoc10" 
+by_reg("tprosoc10") +
+  theme_schola(
+    "scatter",
+    legend.position = c(0.65, .25),
+    legend.margin = margin(0, 0, 0, 0, unit = "cm"),
+    legend.box = "vertical",
+    legend.title.align =  1,
+    legend.box.just = "right"
+  ) +
+  scale_y_continuous(limits = c(-.1, 10), breaks = seq(0, 10, 1)) +
+  guides(linetype = guide_legend(title = "skupina", order = 1, labels = labeller(intervention_labs), nrow = 1),
+         col = guide_legend(byrow = TRUE, nrow = 1)) +
+  coord_cartesian(
+    ylim = c(-.25, 10.1),
+    xlim = c(.41, max(dfm$wave_ind)) + .1,
+    expand = F
+  )
+
+```

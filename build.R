@@ -12,7 +12,7 @@ source("shared.R") # GDrive url & custom functions
 # compile_and_open('003_check-and-process-data.Rmd')
 # compile_and_open('01_report.Rmd')
 compile_and_open('02_internal_report.Rmd')
-rmarkdown::render("02_internal_report.Rmd")
+# rmarkdown::render("02_internal_report.Rmd")
 
 # compile_and_open('02_schola-styled-redoc.Rmd')
 rmarkdown::render('99_reproducibility.Rmd', output_dir = 'reports-output')

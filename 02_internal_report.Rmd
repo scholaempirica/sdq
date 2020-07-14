@@ -34,9 +34,10 @@ library(lmerTest)
 library(broom.mixed)
 library(flextable)
 library(ggeffects)
-library(conflicted)
-conflict_prefer("lmer", "lmerTest")
-conflict_prefer("filter", "dplyr")
+
+lmer <- lmerTest::lmer
+filter <- dplyr::filter
+here <- here::here
 ```
 
 ```{r}
@@ -61,6 +62,18 @@ render_custom <- function(x, ...) {
     paste(collapse = "\n") %>% 
     # knitr must use this result `asis`
     knitr::asis_output()
+}
+
+
+
+
+
+FitFlextableToPage <- function(ft, pgwidth = 6){
+
+  ft_out <- ft %>% autofit()
+
+  ft_out <- width(ft_out, width = dim(ft_out)$widths*pgwidth /(flextable_dim(ft_out)$widths))
+  return(ft_out)
 }
 ```
 
@@ -146,7 +159,7 @@ dfm %<>% replace_with_na(replace = list(id_class = "-"))
 
 ```{r include=FALSE}
 # from zscores to sten (0-10 scale), 5.5is the mean score of "normative" group (SDQ)
-dfm %<>% mutate_at(vars(emo:pro), list(~ (. * 2) + 5.5))
+dfm %<>% mutate_at(vars(emo:pro), list(~ (. * 2) + 5))
 ```
 
 
@@ -258,6 +271,15 @@ dfm %>% group_by(wave_ind) %>%
 ```
 
 ```{r}
+wave_labs <- paste0(seq(1, max(dfm$wave)), ". vlna")
+names(wave_labs) = seq(1, max(dfm$wave))
+
+wave_ind_labs <- paste0(seq(1, max(dfm$wave_ind)), ". vlna")
+names(wave_ind_labs) = seq(1, max(dfm$wave_ind))
+```
+
+
+```{r}
 dfm %>% count(gender = gender_girl, intervention = is_intervention2, wave = wave) %>%
   ggplot(aes(x = intervention, y = n, fill = gender)) +
   geom_bar(position = "fill", stat = "identity") +
@@ -281,11 +303,7 @@ dfm %>% count(gender = gender_girl, intervention = is_intervention2, wave = wave
   theme_schola(legend.position = "bottom", multiplot = TRUE)
 ```
 ```{r}
-wave_labs <- paste0(seq(1, max(dfm$wave)), ". vlna")
-names(wave_labs) = seq(1, max(dfm$wave))
 
-wave_ind_labs <- paste0(seq(1, max(dfm$wave_ind)), ". vlna")
-names(wave_ind_labs) = seq(1, max(dfm$wave_ind))
 
 # age by study group (waves 1-3 have absent age)
 dfm %>% ggplot(aes(age, col = is_intervention2)) +
@@ -410,7 +428,6 @@ dfm %>%
 
 
 ```{r suppress = TRUE}
-
 # more "ergonomic" key variable names 
 dfmod <- dfm %>%
   mutate(
@@ -435,11 +452,11 @@ dfmod <- dfm %>%
          ends_with("10")) %>%
   filter(wave %in% c(1:3))
 
-# WARNING! because control group has only 3 possible measurments so far,
+# WARNING! because control group has only 3 possible measurements so far,
 # interaction between wave and group cannot be estimated for the other waves
 # however, it is possible to treat wave as numeric and get simple predictions
 # of all remaining "levels"
-# the other say is to throw the waves out and work with MM/YYYY times
+# the other way is to throw the waves out and work with MM/YYYY times
 
 
 # interactions between wave, group, gender and/or age was tested insignificant,
@@ -452,33 +469,48 @@ mod <-
            dfmod
          )))
 
+# sign. interactions sorted by abs eff. size
+map2_dfr(mod$model,
+         mod$dim,
+         ~ .x %>% tidy %>% add_column(.before = 1, dim = .y)) %>% 
+  filter(p.value <= .05 & str_detect(term, ":")) %>% 
+  arrange(desc(abs(estimate)))
 
 map2(
   .x = mod$model,
   .y = 1:5,
   ~ ggpredict(.x, c("wave", "group", "gender")) %>%
-    plot(
-      colors = c("#F8766D", "#619CFF"),
-      connect.lines = TRUE,
-      dodge = .15
+    ggplot(
+      aes(
+        x,
+        predicted,
+        group = group,
+        col = group,
+        ymin = conf.low,
+        ymax = conf.high
+      )
     ) +
+    geom_point(position = position_dodge(.2), size = 1.7) +
+    geom_errorbar(
+      position = position_dodge(.2),
+      width = .2,
+      size = .7
+    ) +
+    geom_line(size = .7) +
+    facet_wrap( ~ facet) +
     theme_schola(
       multiplot = TRUE,
-      legend.title = element_blank(),
-      legend.position = "bottom"
-    ) +
-    scale_y_continuous(limits = c(1, 10), breaks = seq(1, 10, 1)) +
-    scale_x_discrete(limits = wave_ind_labs[1:3]) +
+      legend.title = element_blank()
+      ) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+    scale_x_discrete(labels = wave_ind_labs[1:3]) +
     labs(
       title = fig_counter("SDQ – vývoj v čase"),
       subtitle = paste("Dimenze –", dim_labs[.y]),
       caption = "se statisticky kontrolovaným vlivem věku"
     )
 )
-
 ```
-
-
 
 
 ```{r suppress = TRUE}
@@ -488,7 +520,7 @@ map2(
   .y = 1:5,
   ~ .x %>%
     ggpredict(terms = c("gender", "group", "age [3:7, by = 2]")) %>%
-    plot(colors = c("#F8766D", "#619CFF"),
+    plot(colors = c("#F8766D", "#00BFC4"),
          dodge = .15) +
     facet_wrap(~ facet, labeller = labeller(facet = sel_age_labs)) +
     scale_color_discrete(name = "skupina", labels = intervention_labs) +
@@ -496,7 +528,7 @@ map2(
     theme_schola(
       "y",
       multiplot = TRUE,
-      legend.position = c(.825, 0.25)
+      legend.position = "bottom"
     ) +
     labs(
       title = fig_counter("SDQ – hodnoty při různých úrovních vtupního věku dle modelu"),
@@ -509,7 +541,7 @@ map2(
   .x = mod$model,
   .y = 1:5,
   ~ .x %>%  ggpredict(terms = c("age", "group", "wave")) %>%
-    plot(colors = c("#F8766D", "#619CFF"),
+    plot(colors = c("#F8766D", "#00BFC4"),
          dodge = .15) +
     facet_wrap(~ facet, labeller = labeller(facet = wave_ind_labs[1:3])) +
     scale_y_continuous(limits = c(1, 10), breaks = seq(1, 10, 1)) +
@@ -518,6 +550,51 @@ map2(
       title = fig_counter("SDQ – asociace vstupního věku a dimenze dle individuálních vln"),
       subtitle = paste("Dimenze –", dim_labs[.y]))
 )
+
+
+map2(
+  .x = mod$model,
+  .y = 1:5,
+  ~ .x %>% ggpredict(terms = c("group", "gender", "wave")) %>% 
+    ggplot(aes(
+    x,
+    predicted,
+    col = group,
+    ymin = conf.low,
+    ymax = conf.high
+  )) +
+    facet_wrap(~ facet) +
+  geom_point(position = position_dodge(.1), size = 1.7) +
+  geom_errorbar(position = position_dodge(.1), width = .1, size = .7) +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+  theme_schola("y", multiplot = TRUE, legend.title = element_blank()) +
+    labs(
+      title = fig_counter("SDQ – asociace vstupního věku a dimenze dle individuálních vln"),
+      subtitle = paste("Dimenze –", dim_labs[.y]),
+      caption = "se statisticky kontrolovaným vlivem věku")
+)[1]
+
+map2(
+  .x = mod$model,
+  .y = 1:5,
+  ~ .x %>% ggpredict(terms = c("group", "gender")) %>% 
+    ggplot(aes(
+    x,
+    predicted,
+    col = group,
+    ymin = conf.low,
+    ymax = conf.high
+  )) +
+  geom_point(position = position_dodge(.1), size = 1.7) +
+  geom_errorbar(position = position_dodge(.1), width = .1, size = .7) +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+  theme_schola("y", multiplot = TRUE, legend.title = element_blank()) +
+    labs(
+      title = fig_counter("SDQ – asociace vstupního věku a dimenze dle individuálních vln"),
+      subtitle = paste("Dimenze –", dim_labs[.y]),
+      caption = "se statisticky kontrolovaným vlivem věku")
+)[1]
+
 
 
 ```
