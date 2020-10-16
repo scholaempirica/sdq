@@ -1,0 +1,163 @@
+---
+title: "SDQ cherry pick"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(tidyverse)
+library(mirt)
+library(magrittr)
+library(here)
+```
+
+```{r}
+# get item matrix from the first measurement
+df_mirt <- read_rds(here("data-processed/sdq_1st_wave.rds"))
+```
+
+```{r}
+# get the complete SDQ model
+mirt_fit_complete <- read_rds(here("data-processed/irt_sdq_model.rds"))
+# case when only pee & pro dims are measured
+# get IRT model and compare the estimated latent scores with the ones estimated under the comple SDQ model
+mirt_model_pee_pro <- "
+pee = 1-5
+pro = 6-10
+
+COV = pee*pro
+"
+mirtCluster(8) # use 4  cores
+mirt_fit_pee_pro <-
+  mirt(df_mirt %>% select(
+    # relations to peers symptoms - internalizing
+    "tloner", "ufriend", "upopular", "tbullied", "toldbest",
+    # pro-social symptoms
+    "tconsid", "tshares", "tcaring", "tkind", "thelpout"
+  ),
+  mirt_model_pee_pro,
+  "graded",
+  SE = FALSE,
+  method = "MHRM",
+  technical = list(removeEmptyRows = TRUE)
+  )
+
+M2(mirt_fit_complete, na.rm = T)
+M2(mirt_fit_pee_pro, na.rm = T)
+
+items_complete <- mirt_fit_pee_pro %>%
+  coef(simplify = TRUE) %>%
+  pluck("items") %>%
+  as.data.frame() %>%
+  rownames_to_column()
+
+items_pee_pro <- mirt_fit_complete %>%
+  coef(simplify = TRUE) %>%
+  pluck("items") %>%
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  slice(16:25) %>%
+  transmute(rowname, a1 = a4, a2 = a5, d1, d2)
+
+items_complete[-1] - items_pee_pro[-1] # differences, but not huge
+
+# estimate thetas for pee & pro
+thetas_complete <- fscores(mirt_fit_complete, method = "MAP", QMC = T, full.scores.SE = T)
+thetas_pee_pro <- fscores(mirt_fit_pee_pro, method = "MAP", QMC = T, full.scores.SE = T)
+
+thetas_complete %<>% as_tibble() %>% select(pee, pro, SE_pee, SE_pro) %>% pivot_longer(everything(), names_to = "var", values_to = "complete")
+thetas_pee_pro %<>% as_tibble() %>% pivot_longer(everything(), names_to = "var", values_to = "pee_pro")
+```
+
+
+```{r}
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  ggplot(aes(complete, pee_pro)) +
+  geom_point() +
+  facet_wrap(~var, scales = "free")
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>% 
+  ggplot(aes(complete_pee - pee_pro_pee)) +
+  geom_histogram()
+  
+  bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>% 
+  ggplot(aes(complete_pro - pee_pro_pro)) +
+  geom_histogram()
+
+
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>%
+  ggplot(aes(complete_SE_pee-pee_pro_SE_pee)) +
+  geom_histogram()
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>%
+  ggplot(aes(complete_SE_pro-pee_pro_SE_pro)) +
+  geom_histogram()
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>% filter(var %in% c("pee", "pro")) %>% pivot_longer(c(complete, pee_pro)) %>% 
+  ggplot(aes(value, col = name)) + geom_density() + facet_wrap(~ var)
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>% filter(var %in% c("SE_pee", "SE_pro")) %>% pivot_longer(c(complete, pee_pro)) %>% 
+  ggplot(aes(value, col = name)) + geom_density() + facet_wrap(~ var)
+  
+  
+  
+  # pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  # unnest() %>%
+  # ggplot(aes(complete_SE_pro-pee_pro_SE_pro)) +
+  # geom_histogram()
+
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>%
+  ggplot(aes(abs(complete_pee-pee_pro_pee), abs(complete_SE_pee- pee_pro_SE_pee))) +
+  geom_point() + scale_x_log10() + scale_y_log10()
+
+
+```
+
+
+```{r}
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %$% cor.test(.$complete_pee, .$pee_pro_pee)
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %$% cor.test(.$complete_pro, .$pee_pro_pro)
+
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %$% t.test(.$complete_pro, .$pee_pro_pro, paired = TRUE)
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %$% t.test(.$complete_pee, .$pee_pro_pee, paired = TRUE)
+
+```

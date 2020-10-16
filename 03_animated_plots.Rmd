@@ -33,11 +33,36 @@ conflict_prefer("lmer", "lmerTest")
 conflict_prefer("filter", "dplyr")
 ```
 
+```{r data import}
+dfm <- read_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
+```
+
+```{r include=FALSE}
+# from zscores to sten (0-10 scale), 5.5is the mean score of "normative" group (SDQ)
+dfm %<>% mutate_at(vars(emo:pro), list(~ (. * 2) + 5))
+```
+
+
+
 ```{r}
-load(here("data-intermediate/envir.RData"))
+dim_labs <- c("emoce", "chování", "hyperaktivita", "vrstevníci", "prosociální")
+names(dim_labs) = c("emo", "con", "hyp", "pee", "pro")
+
+gender_labs <- c("dívky", "chlapci")
+names(gender_labs) = c("girls", "boys")
+
+intervention_labs <- c("kontrolní", "intervenční")
+names(intervention_labs) = c("control", "experimental")
+
+sel_age_labs <- paste0("vstupní věk = ", 3:7)
+names(sel_age_labs) <- c(3:7)
 ```
 
 ```{r}
+# load(here("data-intermediate/envir.RData"))
+```
+
+```{r eval=FALSE, include=FALSE}
   
 # jawdropping plot in motion
 sdq_dist_anim <- dfm %>% group_by(wave) %>% 
@@ -78,5 +103,27 @@ sdq_irt_dist_anim <- dfm %>%
   transition_states(wave_ind)
 
 anim_save("sdq_irt_dist_anim_prez.gif", animation = sdq_irt_dist_anim, path = here("data-processed"))
+```
+
+```{r}
+dfm %>%
+  drop_na(gender_girl) %>% 
+  select(id_pupil, gender_girl, is_intervention2, emo:pro) %>%
+  pivot_longer(emo:pro) %>%
+  ggplot(aes(value, col = is_intervention2)) +
+  geom_density(key_glyph = draw_key_smooth) +
+  scale_color_discrete(name = "skupina", labels = intervention_labs) +
+  facet_wrap(~ name, nrow = 2, labeller = labeller(name = dim_labs)) +
+    scale_x_continuous(n.breaks = 7) +
+
+  labs(x = "úroveň dimenze vyjádřená v **obvyklém měřítku SDQ** (tj. *0-10 bodů, 5 = průměr*)",
+       y = "„relativní četnost“") +
+  guides(color = guide_legend(keyheight = 1, title.vjust = -.3)) +
+  coord_cartesian(xlim = c(-.3,10.3), expand = FALSE) +
+  theme_schola("x",
+               axis.title.x = ggtext::element_markdown(),
+               axis.title.y = element_text(),
+               multiplot = TRUE,
+               legend.position = c(.825, 0.25))
 ```
 

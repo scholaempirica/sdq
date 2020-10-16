@@ -416,6 +416,98 @@ df_mirt <- dfm %>%
 n_df_mirt <- nrow(df_mirt)
 ```
 
+```{r eval=FALSE, include=FALSE}
+# pro inovace v pedagogice
+
+# get the complete SDQ model
+mirt_fit_complete <- read_rds(here("data-processed/irt_sdq_model.rds"))
+# case when only pee & pro dims are measured
+# get IRT model and compare the estimated latent scores with the ones estimated under the comple SDQ model
+mirt_model_pee_pro <- "
+pee = 1-5
+pro = 6-10
+
+COV = pee*pro
+"
+mirtCluster(8) # use 4  cores
+mirt_fit_pee_pro <-
+  mirt(df_mirt %>% select(
+    # relations to peers symptoms - internalizing
+    "tloner", "ufriend", "upopular", "tbullied", "toldbest",
+    # pro-social symptoms
+    "tconsid", "tshares", "tcaring", "tkind", "thelpout"
+  ),
+  mirt_model_pee_pro,
+  "graded",
+  SE = FALSE,
+  method = "MHRM",
+  technical = list(removeEmptyRows = TRUE)
+  )
+
+items_complete <- mirt_fit_pee_pro %>%
+  coef(simplify = TRUE) %>%
+  pluck("items") %>%
+  as.data.frame() %>%
+  rownames_to_column()
+
+items_pee_pro <- mirt_fit_complete %>%
+  coef(simplify = TRUE) %>%
+  pluck("items") %>%
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  slice(16:25) %>%
+  transmute(rowname, a1 = a4, a2 = a5, d1, d2)
+
+items_complete[-1] - items_pee_pro[-1] # differences, but not huge
+
+# estimate thetas for pee & pro
+thetas_complete <- fscores(mirt_fit_complete, method = "MAP", QMC = T, full.scores.SE = T)
+thetas_pee_pro <- fscores(mirt_fit_pee_pro, method = "MAP", QMC = T, full.scores.SE = T)
+
+thetas_complete %<>% as_tibble() %>% select(pee, pro, SE_pee, SE_pro) %>% pivot_longer(everything(), names_to = "var", values_to = "complete")
+thetas_pee_pro %<>% as_tibble() %>% pivot_longer(everything(), names_to = "var", values_to = "pee_pro")
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  ggplot(aes(complete, pee_pro)) +
+  geom_point() +
+  facet_wrap(~var, scales = "free")
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>% mutate(pee_se_diff = complete_SE_pee- pee_pro_SE_pee) %>% 
+  ggplot(aes(pee_se_diff)) +
+  geom_histogram()
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>%
+  ggplot(aes(abs(complete_pee-pee_pro_pee), abs(complete_SE_pee- pee_pro_SE_pee))) +
+  geom_point() + scale_x_log10() + scale_y_log10()
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %>%
+  ggplot(aes(abs(complete_pee-pee_pro_pee))) +
+  geom_histogram()
+
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %$% t.test(.$complete_pro, .$pee_pro_pro, paired = TRUE)
+
+bind_cols(thetas_complete, thetas_pee_pro) %>%
+  transmute(var = var...1, complete, pee_pro) %>%
+  pivot_wider(values_from = c(complete, pee_pro), names_from = var,values_fn = list) %>%
+  unnest() %$% t.test(.$complete_pee, .$pee_pro_pee, paired = TRUE)
+
+```
+
+
 Calibration on first measurement data. Sample size (N = `r n_df_mirt`) is sufficient. It is though possible to calibrate the model from *every* measurement (see [Cai, 2010](http://doi.org/10.1007/s11336-010-9178-0)). But...
 
 In the future, we should compare different IRT models for fit and try different method of estimation.
@@ -432,7 +524,7 @@ pro = 21-25
 
 COV = emo*con*hyp*pee*pro
 "
-mirtCluster(4) # use 4  cores
+mirtCluster(8) # use 4  cores
 mirt_fit <-
   mirt(df_mirt[,-1],
        mirt_model,

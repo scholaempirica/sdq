@@ -109,7 +109,7 @@ child_n_ind <-
   - třeba tomuto věnovat zvýšenou pozornost, jinak několik vyplnění dotazníků přijde vniveč -- tzn. zvýšené úsilí se vyplatí
 - již 3. vlnou probíhá náběr dětí do kontrolní skupiny
   - možnost lépe ověřit efekt intervence
-  - sledujeme tzv. interakci skupiny a vlny měření, tj. „mění se intervenční skupina oproti kontrolní jinak?“
+  - sledujeme jestli se intervenční skupina vyvíjí lépe, než kontrolní
   
 ---
 
@@ -167,6 +167,16 @@ read_csv(here("data-processed/cleaning_impact_wave_ind.csv")) %>%
 )
 
 ```
+
+
+
+#### Přehled
+
+```{r}
+
+```
+
+
 
 #### Strengths and Difficulties Questionnaire
 

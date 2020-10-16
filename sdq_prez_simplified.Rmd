@@ -1,0 +1,613 @@
+---
+title: "SDQ"
+subtitle: "průběžné výsledky po 7. vlně"
+output:
+  powerpoint_presentation:
+    slide_level: 4
+    reference_doc: template.pptx
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  dpi = 400,
+  out.width = 9,
+  out.height = 5.409448818897638,
+  fig.asp = 0.6010499,
+  fig.width = 5
+)
+
+options(scipen = 10) # force R to show full numbers, not scientific notation
+options("OutDec" = ",") # Czech decimal mark
+
+knitr::knit_hooks$set(
+  inline = function(x) {
+    if (!is.character(x)) {
+      prettyNum(x, big.mark = " ")
+    } else {
+      x
+    }
+  }
+)
+
+
+# fig. numbering
+fig_count = 0
+
+fig_counter <- function(title = "default title") {
+  fig_count <<- fig_count + 1
+  return(paste0("Graf ", fig_count, ": ", title))
+}
+
+library(reschola)
+library(here)
+library(tidyverse)
+library(magrittr)
+library(scales)
+library(knitr)
+library(naniar)
+source("shared.R")
+set_reschola_ggplot_fonts() # make ggplot2 use Roboto fonts without you having to set it
+library(gganimate)
+library(transformr)
+library(corrr)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(ggeffects)
+
+# theme_set(theme_schola())
+# theme_update(axis.title = element_text())
+
+lmer <- lmerTest::lmer
+filter <- dplyr::filter
+here <- here::here
+
+```
+
+
+```{r}
+dim_labs <- c("emoce", "chování", "hyperaktivita", "vrstevníci", "prosociální")
+names(dim_labs) = c("emo", "con", "hyp", "pee", "pro")
+
+gender_labs <- c("dívky", "chlapci")
+names(gender_labs) = c("girls", "boys")
+
+intervention_labs <- c("kontrolní", "intervenční")
+names(intervention_labs) = c("control", "experimental")
+
+sel_age_labs <- paste0("vstupní věk = ", 3:7)
+names(sel_age_labs) <- c(3:7)
+```
+
+```{r data import}
+dfm <- read_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
+
+
+id_schools <- read_csv2(here("data-input/legend_schools_export_bara.csv"), col_types = cols(id_school = col_character()))
+
+# convert to named vector of codes
+id_schools %<>% select(-school) %>% deframe
+
+# recode accordingly
+# change id_school == 1000 to 10K (it is Liberec, control school)
+dfm %<>% mutate(id_school = id_school %>% fct_recode("10K" = "1000") %>% fct_recode(!!!id_schools))
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# included schools across time, y is count per glob. wave
+dfm %>% filter(!is.na(id_school) & id_school != "99") %>% count(id_school, wave) %>% ggplot(aes(wave, n, col = id_school)) + geom_line(show.legend = F)
+```
+
+
+```{r include=FALSE}
+# from zscores to sten (0-10 scale), 5.5is the mean score of "normative" group (SDQ)
+dfm %<>% mutate_at(vars(emo:pro), list(~ (. * 2) + 5))
+```
+
+```{r}
+min_date <- dfm %>% filter(wave == 7) %>% pull(fill_in_date) %>% lubridate::ymd() %>% min(na.rm = T) %>% format("%d. %m. %Y") %>% as.character() %>% str_remove("^0")
+max_date <- dfm %>% filter(wave == 7) %>% pull(fill_in_date) %>% lubridate::ymd() %>% max(na.rm = T) %>% format("%d. %m. %Y") %>% as.character() %>% str_remove("^0")
+child_n <- dfm %>% pull(id_pupil) %>% n_distinct
+
+child_n_ind <-
+  dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>%
+  count(wave_ind) %>% filter(wave_ind == 6) %>% pull(n)
+```
+
+
+
+#### Úvod
+
+- ze  7. vlny máme záznamy od `r min_date` do `r max_date`
+- alespoň jedním měřením prošlo doposud `r child_n` dětí
+  - všemi 6 vlnami (současné maximum) prošlo `r child_n_ind` dětí
+- relativně **velké ztráty díky chybám v udělování ID kódů** (jedno ID je přiděleno více dětem)
+  - cca 10 % vyplněných dotazníků bylo třeba vyřadit
+- již 3. vlnou probíhá náběr dětí do kontrolní skupiny
+  - možnost lépe ověřit efekt intervence
+  - sledujeme **jestli se intervenční skupina vyvíjí lépe, než kontrolní**
+  
+
+
+<!-- #### Přehled -->
+
+```{r eval=FALSE, include=FALSE}
+dfm %>%
+  filter(!is.na(id_school) & id_school != "99") %>%
+  count(id_school, wave)
+
+```
+
+
+#### Globální × individuální vlna
+
+- globální vlna se vztahuje k vlně sběru v daném časovém rámci
+- individuální vlna hovoří o *konkrétním měření konkrétního dítěte* (tzn. 2. ind. vlna je v pořadí 2. měření daného dítěte)
+- ve zbytku prezentace **pracujeme s ind. vlnami** (*x*-tým měřením/hodnocením dítěte)
+  - k dispozici máme 3 vlny s jak intervenční, tak i kontrolní skupinou
+
+#### Dopad validace dat -- globální vlny
+
+
+```{r message=FALSE}
+read_csv(here("data-processed/cleaning_impact_wave.csv")) %>%
+  mutate(`% lost` = scales::percent(`% lost`/100, suffix = " %", accuracy = .1, decimal.mark = ",")) %>% 
+  kable(
+    col.names = c(
+      "glob. vlna" ,
+      "poč. před",
+      "poč. po",
+      "poč. ztrac.",
+      "pod. ztrac."
+    ), format.args = list(big.mark = " ")
+)
+```
+
+
+#### Dopad validace dat -- individuální vlny
+
+```{r message=FALSE}
+read_csv(here("data-processed/cleaning_impact_wave_ind.csv")) %>%
+  mutate(`% lost` = scales::percent(`% lost`/100, suffix = " %", accuracy = .1, decimal.mark = ",")) %>% 
+  kable(
+    col.names = c(
+      "ind. vlna" ,
+      "poč. před",
+      "poč. po",
+      "poč. ztrac.",
+      "pod. ztrac."
+    ), format.args = list(big.mark = " ")
+)
+
+```
+
+
+# SDQ -- připomenutí
+
+#### Strengths and Difficulties Questionnaire
+
+![](sdq_dimensions.png)
+
+
+#### Strengths and Difficulties Questionnaire
+
+- výsledkem 0–10 bodů za každou dimenzi
+  - vychází z upraveného součtu jednotlivých pětic položek
+- první čtyři jsou *negativně formulované,* chceme vidět **pokles**, snižování hodnot
+- ale pozor: pátá je *pozitivní*, a tak chceme vidět **růst**
+- následující grafy ukazují počty dětí, které získaly daný počet bodů v dané dimenzi SDQ
+   - celkem 3 časové úseky (vlny), červená je skupina kontrolní, modrá intervenční
+
+
+# Vývoj v čase
+
+
+```{r}
+ctt_dim_labs <- c("emoce", "chování", "hyperaktivita", "vrstevníci", "prosociální")
+names(ctt_dim_labs) = c("temotion10", "tconduct10", "thyper10", "tpeer10", "tprosoc10")
+```
+
+
+```{r, fig.cap=fig_counter("Rozložení bodů SDQ v čase **první** vlny")}
+# 1th wave
+dfm %>% filter(wave_ind == 1) %>% 
+  drop_na(gender_girl) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(value, fill = is_intervention2)) +
+  geom_bar(position = position_dodge(preserve = "single")) +
+  scale_fill_discrete(name = "skupina", labels = intervention_labs) +
+  scale_x_continuous(n.breaks = 7) +
+  scale_y_continuous(breaks = seq(0, 500, 200)) +
+  facet_wrap(~ name, labeller = labeller(name = ctt_dim_labs)) +
+  labs(x = "body v SDQ", y = "počet dětí") +
+  theme_schola(multiplot = TRUE, legend.position = c(.825, 0.250), axis.title = element_text())
+```
+
+```{r, fig.cap=fig_counter("Rozložení bodů SDQ v čase **druhé** vlny")}
+# 7th wave
+dfm %>% filter(wave_ind == 2) %>% 
+  drop_na(gender_girl) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(value, fill = is_intervention2)) +
+  geom_bar(position = position_dodge(preserve = "single")) +
+  scale_fill_discrete(name = "skupina", labels = intervention_labs) +
+  scale_x_continuous(n.breaks = 7) +
+  scale_y_continuous(breaks = seq(0, 500, 200)) +
+  facet_wrap(~ name, labeller = labeller(name = ctt_dim_labs)) +
+  labs(x = "body v SDQ", y = "počet dětí") +
+  theme_schola(multiplot = TRUE, legend.position = c(.825, 0.250), axis.title = element_text())
+```
+
+```{r, fig.cap=fig_counter("Rozložení bodů SDQ v čase **třetí** vlny")}
+# 7th wave
+dfm %>% filter(wave_ind == 3) %>% 
+  drop_na(gender_girl) %>%
+  pivot_longer(contains("10")) %>%
+  ggplot(aes(value, fill = is_intervention2)) +
+  geom_bar(position = position_dodge(preserve = "single")) +
+  scale_fill_discrete(name = "skupina", labels = intervention_labs) +
+  scale_x_continuous(n.breaks = 7) +
+  scale_y_continuous(breaks = seq(0, 500, 200)) +
+  facet_wrap(~ name, labeller = labeller(name = ctt_dim_labs)) +
+  labs(x = "body v SDQ", y = "počet dětí") +
+  theme_schola(multiplot = TRUE, legend.position = c(.825, 0.250), axis.title = element_text())
+```
+
+
+
+#### Co a jak vlastně měříme?
+
+- dítě hodnotíte na základě jeho *chování*
+- pokud se chová vysoce hyperaktivně, velmi pravděpodobně na položku *„Je neklidný/á. Nevydrží dlouho bez hnutí“* odpovíte *„Definitivně pravda“*
+- vaše odpověď je daná chováním dítěte *(ale nikoliv 100%)*
+- **jde nám o hyperaktivitu dítěte**, nikoliv o to, kolik bodů dostalo dítě v dotazníku
+- hyperaktivita je v dětské populaci rozložena podobně jako např. výška nebo váha (viz graf na dalším snímku)
+  - většina žen má průměrnou výšku, jen malá část je extrémně nízká nebo vysoká;
+  podobně je to s hyperaktivitou, prosociálním chováním atp.
+
+---
+
+```{r, fig.cap=fig_counter("Rozložení výšky žen v ČR")}
+rnorm(1e6, mean = 166.2, sd = 6.4) %>%
+  as_tibble() %>%
+  ggplot(aes(value, group  =1, label = "asdf")) +
+  geom_density(bw = .5, col = "gray40") +
+  geom_vline(xintercept = 166.2, col = "red", alpha = .7) +
+  theme_schola("x", axis.title = element_text()) +
+  labs(x = "výška v cm", y = "„pravděpodobnost“") +
+  coord_cartesian(xlim = c(-4 * 6.4 + 166.2, 4 * 6.4 + 166.2))
+```
+
+#### Stejně je to s dimenzemi SDQ
+
+- moderní psychometrie umožňuje na základě vašeho hodnocení chování odhadovat přímo míru hyperaktivity daného dítěte a porovnávat ji s dalšími dětmi nebo stejným dítětem v jiném čase
+- následující graf v animaci ukazuje proměnu těchto vlastností (dimenzí) v čase -- **je vidět posun po ose X k více žádoucím hodnotám** (pokles prvních 4 a růst 5. dimenze)
+
+
+
+```{r, fig.cap=fig_counter("Rozložení latentních skórů SDQ v čase (dle skupiny)")}
+include_graphics("data-processed/sdq_irt_dist_anim_group_prez.gif")
+```
+
+
+
+```{r}
+wave_labs <- paste0(seq(1, max(dfm$wave)), ". vlna")
+names(wave_labs) = seq(1, max(dfm$wave))
+
+wave_ind_labs <- paste0(seq(1, max(dfm$wave_ind)), ". vlna")
+names(wave_ind_labs) = seq(1, max(dfm$wave_ind))
+```
+
+
+
+```{r }
+# more "ergonomic" key variable names 
+dfmod <- dfm %>%
+  mutate(
+    wave = factor(wave_ind),
+    group = factor(is_intervention2, labels = intervention_labs),
+    child = id_pupil,
+    gender = factor(gender_girl, labels = gender_labs),
+    age = age_fst_measur,
+    class = id_class,
+    school = id_school,
+    teacher = id_teach_unq
+  ) %>%
+  select(
+    wave,
+    group,
+    child,
+    gender,
+    age,
+    class,
+    school,
+    teacher,
+    emo:pro,
+    ends_with("10"),
+    region
+  )
+
+# WARNING! because control group has only 3 possible measurements so far,
+# interaction between wave and group cannot be estimated for the other waves
+# however, it is possible to treat wave as numeric and get simple predictions
+# of all remaining "levels"
+# the other way is to throw the waves out and work with MM/YYYY times
+
+
+# interactions between wave, group, gender and/or age was tested insignificant,
+# we keep them as simple covariates
+
+mod <-
+  tibble(
+    dim = names(dim_labs),
+    model = map(dim, ~ lmer(
+      paste(., "~ wave * group + age + gender + (1 | school / teacher / child)"),
+      dfmod %>% filter(wave %in% c(1:3)) # only 3 ind waves!
+    ))
+  )
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+# sign. interactions sorted by abs eff. size
+map2_dfr(mod$model,
+         mod$dim,
+         ~ .x %>% tidy %>% add_column(.before = 1, dim = .y)) %>% 
+  filter(p.value <= .05 & str_detect(term, ":")) %>% 
+  arrange(desc(abs(estimate)))
+```
+
+
+```{r }
+# sign. interactions sorted by abs eff. size
+coefs_tab <- map2_dfr(mod$model,
+         mod$dim,
+         ~ .x %>% tidy %>% add_column(.before = 1, dim = .y)) %>% 
+    filter(p.value <= .05 & str_detect(term, ":"))
+
+es_vals2 <- coefs_tab %>% filter(str_detect(term, "2")) %>% pull(estimate) %>% abs
+es_vals3 <- coefs_tab %>% filter(str_detect(term, "3")) %>% pull(estimate) %>% abs
+
+esizes <- NULL
+esizes$min2 <- min(es_vals2) %>% round(2)
+esizes$max2 <- max(es_vals2) %>% round(2)
+esizes$med2 <- median(es_vals2) %>% round(2)
+
+esizes$min3 <- min(es_vals3) %>% round(2)
+esizes$max3 <- max(es_vals3) %>% round(2)
+esizes$med3 <- median(es_vals3) %>% round(2)
+
+```
+
+# Vyhodnocení efektu intervence
+
+
+#### Kdyby intervence nefungovala...
+
+- ... pak by se obě skupiny v čase měnily úplně stejným způsobem
+- *pokud* by toto platilo, pravděpodobnost, že nasbíráme taková data, jaká jsme nasbírali, by byla extrémně nízká (< 1 %)
+- lze tedy tvrdit, že intervence měla skutečný, pozitivní dopad
+
+#### V řeči čísel
+
+- děti v intervenční skupině se vyvíjely statisticky významně *lépe ve všech dimenzích SDQ*, a to jako při srovnání 1. a 2., tak i 1. a 3. vlny
+- zlepšení se v rámci jednotlivých dimenzí pohybuje při srovnání 1. a 2. vlny od `r esizes$min2` do `r esizes$max2` bodů, s medianem `r esizes$med2` bodů
+- při srovnání 1. a 3. vlny od `r esizes$min3` do `r esizes$max3` bodů, s medianem `r esizes$med3` bodů, pozitivní vývoj tedy *stabilně pokračoval*
+- závěr -- **intervence má pozitivní dopad na chování dětí** měřené pomocí SDQ
+
+
+#### Graficky
+
+```{r graphComp, fig.cap=fig_counter("Vývoj dimenzí v čase (vliv věku a pohl. stat. fixován)")}
+marginal_effects <- map2_dfr(
+  mod$model, mod$dim,
+  ~ .x %>%
+    ggpredict(c("wave", "group")) %>%
+    add_column(dim = .y, .before = 1)
+)
+
+marginal_effects %>%
+  ggplot(
+    aes(
+      x,
+      predicted,
+      group = group,
+      col = group,
+      ymin = conf.low,
+      ymax = conf.high
+    )
+  ) +
+  geom_point(position = position_dodge(.2), size = 1) +
+  geom_errorbar(
+    position = position_dodge(.2),
+    width = .2,
+    size = .5
+  ) +
+  geom_line(size = .5, position = position_dodge(.2)) +
+  guides(color = guide_legend(nrow = 2, keyheight = .7, title.vjust = -.3)) +
+  facet_wrap(~dim, labeller = labeller(dim = dim_labs), scales = "free_y") +
+  theme_schola(
+    multiplot = TRUE,
+    legend.position = c(.825, 0.2),
+    plot.tag = element_text(size = 9, hjust = 0),
+    # plot.tag.position = c(.75, 0.1),
+    axis.title = element_text()
+  ) +
+  scale_x_discrete(labels = wave_ind_labs[1:3]) +
+  labs(
+    x = "čas", y = "dimenze v měřítku SDQ (počet bodů)", col = "skupina"
+  )
+
+```
+
+# Srovnání vývoje školek
+
+#### Interpretace následujících grafů
+
+- každá školka má svoji barvu
+- zobrazený je vývoj oproti tzv. referenční školce (sestava nezařazených pozorování)
+- při porovnávání je tedy důležitý **odklon od průměrné trajektorie**
+- osa Y vyjadřuje, o kolik bodů SDQ mají zobrazené školy vyšší skóre v jednotlivých dimenzích než školka referenční -- nelze tedy tvrdit, že pohyb určitým směrem je pozitivní, **jde o srovnání průběhů**
+
+#### Kontrolní školky
+
+
+```{r }
+mod_schools_con <-
+  tibble(
+    dim = names(dim_labs),
+    model = map(dim, ~ lmer(
+      paste(., "~ wave * school + age + gender + (1 | teacher / child)"),
+      dfmod %>% mutate(school = school %>% fct_relevel("99")) %>%  # so the reference is 99
+        filter(group == "kontrolní" | school == "99")
+    ))
+  )
+```
+
+```{r aad, fig.cap=fig_counter("Srovnání trajektorií kontrolních školek")}
+change_by_wave_con <- map2_dfr(
+  mod_schools_con$model,
+  mod_schools_con$dim,
+  ~ .x %>%
+    tidy() %>%
+    add_column(dim = .y)
+)
+
+change_by_wave_con %<>%
+  filter(str_detect(term, "wave.:school")) %>%
+  separate(term, c("wave_contr", "school"), ":school")
+
+
+change_by_wave_con %>%
+  # filter() %>%
+  ggplot(aes(x = wave_contr, y = estimate)) +
+  geom_pointrange(aes(
+    col = school,
+    ymin = (-1.96 * std.error) + estimate,
+    ymax = (1.96 * std.error) + estimate
+  ),
+  fatten = 1.5,
+  position = position_dodge2(width = .6),
+  key_glyph = draw_key_point
+  ) +
+  geom_line(aes(group = school, col = school),
+    position = position_dodge2(width = .6),
+    key_glyph = draw_key_point,
+    alpha = .25
+  ) +
+  scale_x_discrete(labels = seq(2, 6)) +
+  scale_colour_discrete(labels = function(x) {
+    str_wrap(x, width = 15)
+  }) +
+  labs(
+    x = "srovnání 1. a x. vlny",
+    y = "zvýšení SDQ oproti ref. školce"
+  ) +
+  facet_wrap(~dim, labeller = labeller(dim = dim_labs)) +
+  guides(col = guide_legend(
+    title = "školka",
+    ncol = 2, byrow = TRUE,
+    # keyheight = .1, keywidth = .1,
+  )) +
+  theme_schola(multiplot = TRUE,
+    axis.title = element_text(),
+    # legend.title = element_text(),
+    legend.text = element_text(size = 7),
+    legend.key.size = unit(.1, "mm"),
+    legend.position = c(.85, .2)
+  )
+
+```
+
+
+#### Intervenční školky
+
+```{r }
+#### by regions -- added region to interaction
+mod_schools <-
+  tibble(
+    dim = names(dim_labs),
+    model = map(dim, ~ lmer(
+      paste(., "~ wave * school + age + gender + (1 | teacher / child)"),
+      dfmod %>% mutate(school = school %>% fct_relevel("99")) %>%  # so the reference is 99
+        filter(group == "intervenční" | school == "99")
+    ))
+  )
+```
+
+```{r aaasd, fig.cap=fig_counter("Srovnání trajektorií intervenčních školek")}
+change_by_wave <- map2_dfr(
+  mod_schools$model,
+  mod_schools$dim,
+  ~ .x %>%
+    tidy() %>%
+    add_column(dim = .y)
+)
+
+change_by_wave %<>%
+  filter(str_detect(term, "wave.:school")) %>%
+  separate(term, c("wave_contr", "school"), ":school")
+
+
+
+# change_by_wave %>%
+#   filter(wave_contr == "wave2") %>% 
+#   ggplot(aes(y = school, x = estimate)) +
+#   geom_pointrange(aes(
+#     xmin = (-1.96 * std.error) + estimate,
+#     xmax = (1.96 * std.error) + estimate
+#   )) + facet_wrap(~ dim)
+
+change_by_wave %>%
+  # filter() %>%
+  ggplot(aes(x = wave_contr, y = estimate)) +
+  geom_pointrange(aes(
+    col = school,
+    ymin = (-1.96 * std.error) + estimate,
+    ymax = (1.96 * std.error) + estimate
+  ),
+  fatten = 1.5,
+  position = position_dodge2(width = .6),
+  key_glyph = draw_key_point
+  ) +
+  geom_line(aes(group = school, col = school),
+    position = position_dodge2(width = .6),
+    key_glyph = draw_key_point,
+    alpha = .25
+  ) +
+  scale_x_discrete(labels = seq(2, 6)) +
+  scale_colour_discrete(labels = function(x) {
+    str_wrap(x, width = 15)
+  }) +
+  labs(
+    x = "srovnání 1. a x. vlny",
+    y = "zvýšení SDQ oproti ref. školce"
+  ) +
+  facet_wrap(~dim, labeller = labeller(dim = dim_labs)) +
+  guides(col = guide_legend(
+    title = "školka",
+    ncol = 2, byrow = TRUE,
+    # keyheight = .1, keywidth = .1,
+  )) +
+  theme_schola(multiplot = TRUE,
+    axis.title = element_text(),
+    # legend.title = element_text(),
+    legend.text = element_text(size = 7),
+    legend.key.size = unit(.1, "mm"),
+    legend.position = c(.85, .2)
+  )
+
+
+```
+
+#### Závěr
+
+- z hlediska kvantitativního výzkumu můžeme doložit pozitivní efekt intervence v rámci populace mateřských škol
+- vývoj ve všech zúčastněných školkách je srovnatelný, s několika výjimkami, kde změna nebyla natolik silná (ale došlo k ní)
