@@ -1,6 +1,6 @@
 ---
 title: "SDQ"
-subtitle: "průběžné výsledky po 7. vlně"
+subtitle: "průběžné výsledky k 7. a 8. vlně"
 output:
   powerpoint_presentation:
     slide_level: 4
@@ -83,7 +83,7 @@ names(sel_age_labs) <- c(3:7)
 ```
 
 ```{r data import}
-dfm <- read_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
+dfm <- read_rds(here("data-processed/waves_1-8_cleaned-plus-IRT.rds"))
 
 
 id_schools <- read_csv2(here("data-input/legend_schools_export_bara.csv"), col_types = cols(id_school = col_character()))
@@ -110,31 +110,54 @@ dfm %<>% mutate_at(vars(emo:pro), list(~ (. * 2) + 5))
 ```
 
 ```{r}
-min_date <- dfm %>% filter(wave == 7) %>% pull(fill_in_date) %>% lubridate::ymd() %>% min(na.rm = T) %>% format("%d. %m. %Y") %>% as.character() %>% str_remove("^0")
-max_date <- dfm %>% filter(wave == 7) %>% pull(fill_in_date) %>% lubridate::ymd() %>% max(na.rm = T) %>% format("%d. %m. %Y") %>% as.character() %>% str_remove("^0")
-child_n <- dfm %>% pull(id_pupil) %>% n_distinct
+min_date <- dfm %>%
+  filter(wave %in% c(7, 8)) %>%
+  pull(fill_in_date) %>%
+  lubridate::ymd() %>%
+  min(na.rm = T) %>%
+  format("%d. %m. %Y") %>%
+  as.character() %>%
+  str_remove("^0")
+
+max_date <- dfm %>%
+  filter(wave %in% c(7, 8)) %>%
+  pull(fill_in_date) %>%
+  lubridate::ymd() %>%
+  max(na.rm = T) %>%
+  format("%d. %m. %Y") %>%
+  as.character() %>%
+  str_remove("^0")
+
+max_wave_ind <- dfm$wave_ind %>% max
+
+child_n <- dfm %>%
+  pull(id_pupil) %>%
+  n_distinct()
 
 child_n_ind <-
-  dfm %>% filter_at(vars(contains("invalid")), all_vars(. == FALSE)) %>%
-  count(wave_ind) %>% filter(wave_ind == 6) %>% pull(n)
+  dfm %>%
+  count(wave_ind) %>%
+  filter(wave_ind == max_wave_ind) %>%
+  pull(n)
+
 ```
 
 
 
 #### Úvod
 
-- ze  7. vlny máme záznamy od `r min_date` do `r max_date`
+- ze  7. a neúplnné 8. vlny máme záznamy od `r min_date` do `r max_date`
 - alespoň jedním měřením prošlo doposud `r child_n` dětí
-  - všemi 6 vlnami (současné maximum) prošlo `r child_n_ind` dětí
+  - všemi `r max_wave_ind` vlnami (současné maximum) prošlo `r child_n_ind` dětí
 - relativně **velké ztráty díky chybám v udělování ID kódů** (jedno ID je přiděleno více dětem)
   - cca 10 % vyplněných dotazníků bylo třeba vyřadit
 - již 3. vlnou probíhá náběr dětí do kontrolní skupiny
   - možnost lépe ověřit efekt intervence
   - sledujeme **jestli se intervenční skupina vyvíjí lépe, než kontrolní**
+  - pouze intervenční skupina nestačí -- děti se zráním (věkem) v dimenzích SDQ přirozeně „zlešpují“
   
 
 
-<!-- #### Přehled -->
 
 ```{r eval=FALSE, include=FALSE}
 dfm %>%
@@ -275,7 +298,7 @@ dfm %>% filter(wave_ind == 3) %>%
 ```{r, fig.cap=fig_counter("Rozložení výšky žen v ČR")}
 rnorm(1e6, mean = 166.2, sd = 6.4) %>%
   as_tibble() %>%
-  ggplot(aes(value, group  =1, label = "asdf")) +
+  ggplot(aes(value, group  =1)) +
   geom_density(bw = .5, col = "gray40") +
   geom_vline(xintercept = 166.2, col = "red", alpha = .7) +
   theme_schola("x", axis.title = element_text()) +
@@ -395,9 +418,11 @@ esizes$med3 <- median(es_vals3) %>% round(2)
 - *pokud* by toto platilo, pravděpodobnost, že nasbíráme taková data, jaká jsme nasbírali, by byla extrémně nízká (< 1 %)
 - lze tedy tvrdit, že intervence měla skutečný, pozitivní dopad
 
+
+
 #### V řeči čísel
 
-- děti v intervenční skupině se vyvíjely statisticky významně *lépe ve všech dimenzích SDQ*, a to jako při srovnání 1. a 2., tak i 1. a 3. vlny
+- děti v intervenční skupině se vyvíjely **statisticky významně lépe ve všech dimenzích SDQ**, a to jako při srovnání 1. a 2., tak i 1. a 3. vlny
 - zlepšení se v rámci jednotlivých dimenzí pohybuje při srovnání 1. a 2. vlny od `r esizes$min2` do `r esizes$max2` bodů, s medianem `r esizes$med2` bodů
 - při srovnání 1. a 3. vlny od `r esizes$min3` do `r esizes$max3` bodů, s medianem `r esizes$med3` bodů, pozitivní vývoj tedy *stabilně pokračoval*
 - závěr -- **intervence má pozitivní dopad na chování dětí** měřené pomocí SDQ
@@ -447,10 +472,48 @@ marginal_effects %>%
 
 ```
 
+
+#### Vyjádřeno zráním
+
+- věk do značné míry ovlivňuje úroveň jednotlivých dimenzí v SDQ -- přirozené zrání a vývoj dítěte
+- efekt intervence umíme přepočítat na čas, za jaký by se průměrné dítě „samo“ zlepšilo
+- následující tabulka ukazuje *počet let nutných ke kompenzaci efektu intervence* přirozeným zráním, čili „o kolik let děti intervence posunula“
+  - ve 2. i 3. měření
+
+
+#### O kolik let děti intervence posunula
+
+```{r}
+# effect expressed in years of natural growth
+interv_in_age <- map2_dfr(mod$model, mod$dim, ~ .x %>%
+  tidy() %>%
+  filter(str_detect(term, "wave.:|age")) %>%
+  select(term, estimate) %>%
+  add_column(.before = 1, dim = .y))
+
+interv_in_age %<>%
+  pivot_wider(names_from = term, values_from = estimate) %>%
+  mutate(
+    age_compens_w2 = `wave2:groupintervenční` / age,
+    age_compens_w3 = `wave3:groupintervenční` / age
+  )
+
+interv_in_age %<>% mutate(across(-dim, ~ round(.x, 2)))
+
+abbrevs <- dim_labs %>% names
+names(abbrevs) <- dim_labs
+
+interv_in_age %>% transmute(dimenze = dim %>% fct_recode(!!!abbrevs), "v 2. vlně" = age_compens_w2, "v 3. vlně" = age_compens_w3) %>% kable
+
+```
+
+
+
 # Srovnání vývoje školek
 
 #### Interpretace následujících grafů
 
+- zobrazena jsou všechna dostupná data (u některých intervenčních školek až 6 měření)
 - každá školka má svoji barvu
 - zobrazený je vývoj oproti tzv. referenční školce (sestava nezařazených pozorování)
 - při porovnávání je tedy důležitý **odklon od průměrné trajektorie**
@@ -471,7 +534,7 @@ mod_schools_con <-
   )
 ```
 
-```{r aad, fig.cap=fig_counter("Srovnání trajektorií kontrolních školek")}
+```{r aad, fig.cap=fig_counter(paste(str_to_sentence(dim_labs), "– srovnání trajektorií kontrolních školek"))}
 change_by_wave_con <- map2_dfr(
   mod_schools_con$model,
   mod_schools_con$dim,
@@ -484,45 +547,57 @@ change_by_wave_con %<>%
   filter(str_detect(term, "wave.:school")) %>%
   separate(term, c("wave_contr", "school"), ":school")
 
-
-change_by_wave_con %>%
-  # filter() %>%
-  ggplot(aes(x = wave_contr, y = estimate)) +
-  geom_pointrange(aes(
-    col = school,
-    ymin = (-1.96 * std.error) + estimate,
-    ymax = (1.96 * std.error) + estimate
-  ),
-  fatten = 1.5,
-  position = position_dodge2(width = .6),
-  key_glyph = draw_key_point
-  ) +
-  geom_line(aes(group = school, col = school),
+plot_school_effect <- function(.data, dim = "emo", nrow = 1, ncol = NULL, facet = FALSE) {
+  .data %>%
+    filter(dim == {{ dim }}) %>%
+    ggplot(aes(x = wave_contr, y = estimate)) +
+    geom_pointrange(aes(
+      col = school,
+      ymin = (-1.96 * std.error) + estimate,
+      ymax = (1.96 * std.error) + estimate
+    ),
+    fatten = 1.5,
     position = position_dodge2(width = .6),
-    key_glyph = draw_key_point,
-    alpha = .25
-  ) +
-  scale_x_discrete(labels = seq(2, 6)) +
-  scale_colour_discrete(labels = function(x) {
-    str_wrap(x, width = 15)
-  }) +
-  labs(
-    x = "srovnání 1. a x. vlny",
-    y = "zvýšení SDQ oproti ref. školce"
-  ) +
-  facet_wrap(~dim, labeller = labeller(dim = dim_labs)) +
-  guides(col = guide_legend(
-    title = "školka",
-    ncol = 2, byrow = TRUE,
-    # keyheight = .1, keywidth = .1,
-  )) +
-  theme_schola(multiplot = TRUE,
-    axis.title = element_text(),
-    # legend.title = element_text(),
-    legend.text = element_text(size = 7),
-    legend.key.size = unit(.1, "mm"),
-    legend.position = c(.85, .2)
-  )
+    key_glyph = draw_key_point
+    ) +
+    geom_line(aes(group = school, col = school),
+      position = position_dodge2(width = .6),
+      key_glyph = draw_key_point,
+      alpha = .25
+    ) +
+    scale_x_discrete(labels = seq(2, 6)) +
+    scale_colour_discrete(labels = function(x) {
+      str_wrap(x, width = 15)
+    }) +
+    labs(
+      x = "srovnání 1. a x. vlny",
+      y = "zvýšení SDQ oproti ref. školce"
+    ) +
+    {
+      if (facet) {
+        facet_wrap(~dim, labeller = labeller(dim = dim_labs))
+      }
+    } +
+    guides(col = guide_legend(
+      # title = "školka",
+      ncol = {{ncol}}, nrow = {{nrow}}, byrow = TRUE,
+      # keyheight = .1, keywidth = .1,
+    )) +
+    theme_schola(
+      multiplot = if_else(facet, TRUE, FALSE),
+      axis.title = element_text(),
+      # legend.title = element_text(),
+      # legend.text = element_text(size = 7),
+      # legend.key.size = unit(.1, "mm"),
+      # legend.position = c(.85, .2)
+    )
+}
+
+dim_labs %>%
+  names() %>%
+  walk(~ print(change_by_wave_con %>% plot_school_effect(dim = .x, ncol = NULL, nrow = 1) + theme(legend.title = element_blank(), legend.position = "bottom", legend.text = element_text(size = 9),
+    legend.key.size = unit(.1, "mm"))))
+
 
 ```
 
@@ -542,7 +617,7 @@ mod_schools <-
   )
 ```
 
-```{r aaasd, fig.cap=fig_counter("Srovnání trajektorií intervenčních školek")}
+```{r aaasd, fig.cap=fig_counter(paste(str_to_sentence(dim_labs), "– srovnání trajektorií intervenčních školek"))}
 change_by_wave <- map2_dfr(
   mod_schools$model,
   mod_schools$dim,
@@ -555,55 +630,12 @@ change_by_wave %<>%
   filter(str_detect(term, "wave.:school")) %>%
   separate(term, c("wave_contr", "school"), ":school")
 
-
-
-# change_by_wave %>%
-#   filter(wave_contr == "wave2") %>% 
-#   ggplot(aes(y = school, x = estimate)) +
-#   geom_pointrange(aes(
-#     xmin = (-1.96 * std.error) + estimate,
-#     xmax = (1.96 * std.error) + estimate
-#   )) + facet_wrap(~ dim)
-
-change_by_wave %>%
-  # filter() %>%
-  ggplot(aes(x = wave_contr, y = estimate)) +
-  geom_pointrange(aes(
-    col = school,
-    ymin = (-1.96 * std.error) + estimate,
-    ymax = (1.96 * std.error) + estimate
-  ),
-  fatten = 1.5,
-  position = position_dodge2(width = .6),
-  key_glyph = draw_key_point
-  ) +
-  geom_line(aes(group = school, col = school),
-    position = position_dodge2(width = .6),
-    key_glyph = draw_key_point,
-    alpha = .25
-  ) +
-  scale_x_discrete(labels = seq(2, 6)) +
-  scale_colour_discrete(labels = function(x) {
-    str_wrap(x, width = 15)
-  }) +
-  labs(
-    x = "srovnání 1. a x. vlny",
-    y = "zvýšení SDQ oproti ref. školce"
-  ) +
-  facet_wrap(~dim, labeller = labeller(dim = dim_labs)) +
-  guides(col = guide_legend(
-    title = "školka",
-    ncol = 2, byrow = TRUE,
-    # keyheight = .1, keywidth = .1,
-  )) +
-  theme_schola(multiplot = TRUE,
-    axis.title = element_text(),
-    # legend.title = element_text(),
-    legend.text = element_text(size = 7),
-    legend.key.size = unit(.1, "mm"),
-    legend.position = c(.85, .2)
-  )
-
+dim_labs %>%
+  names() %>%
+  walk(~ print(change_by_wave %>% plot_school_effect(dim = .x, nrow = 2) + theme(
+    legend.title = element_blank(), legend.position = "bottom", legend.text = element_text(size = 9),
+    legend.key.size = unit(.1, "mm")
+  )))
 
 ```
 

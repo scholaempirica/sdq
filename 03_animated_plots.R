@@ -7,28 +7,38 @@ library(reschola)
 library(tidyverse)
 library(magrittr)
 library(scales)
-library(naniar)
+
 source("shared.R")
 set_reschola_ggplot_fonts() # make ggplot2 use Roboto fonts without you having to set it
 library(here)
 library(gganimate)
 library(transformr)
-library(corrr)
-library(officer)
-library(lme4)
-library(lmerTest)
-library(broom.mixed)
-library(flextable)
-library(ggeffects)
-
-here <- here::here
 
 
+# HOW TO USE
+# install gifski package, else wait for an eternity
+
+#
 # magickPath <- shortPathName("C:/Program Files/ImageMagick-7.0.10-Q16-HDRI/magick.exe")
 # animation::ani.options(convert = magickPath)
 
 
-load(here("data-intermediate/envir.RData"))
+# load(here("data-intermediate/envir.RData"))
+
+dfm <- read_rds(here("data-processed/waves_1-8_cleaned-plus-IRT.rds"))
+
+# from zscores to sten (0-10 scale), 5.5is the mean score of "normative" group (SDQ)
+dfm %<>% mutate_at(vars(emo:pro), list(~ (. * 2) + 5))
+
+dim_labs <- c("emoce", "chování", "hyperaktivita", "vrstevníci", "prosociální")
+names(dim_labs) = c("emo", "con", "hyp", "pee", "pro")
+
+gender_labs <- c("dívky", "chlapci")
+names(gender_labs) = c("girls", "boys")
+
+intervention_labs <- c("kontrolní", "intervenční")
+names(intervention_labs) = c("control", "experimental")
+
 
 #
 # # jawdropping plot in motion
@@ -158,7 +168,7 @@ sdq_irt_dist_anim_group <- dfm %>%
   labs(x = "úroveň dimenze vyjádřená v **měřítku SDQ** *(tj. 0-10 bodů, 5 = průměr)*",
        y = "„relativní četnost“") +
   coord_cartesian(xlim = c(-.3,10.3), expand = FALSE) +
-      labs(tag = "individuální vlna č. {closest_state}\n{paste0(rep('-', 28*frame/nframes), collapse = '')}") +
+      labs(tag = "individuální vlna č. {closest_state}\n{paste0(rep('-', 29*progress), collapse = '')}") +
   theme_schola("scatter",
     multiplot = TRUE,
     axis.title.x = ggtext::element_markdown(),
@@ -170,6 +180,7 @@ sdq_irt_dist_anim_group <- dfm %>%
   ease_aes('cubic-in-out') +
   transition_states(
     wave_ind,
+    # transition_length = 1, state_length = 0.75,
     wrap = FALSE
   )
 
@@ -184,7 +195,9 @@ anim_save(
   res = 300,
   fps = 20,
   detail = 3,
-  duration = 5,
+  duration = 7,
+  device = "png",
   # renderer = magick_renderer()
 )
 
+system2("open", here("data-processed/sdq_irt_dist_anim_group_prez.gif"))

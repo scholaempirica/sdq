@@ -38,7 +38,7 @@ library(visdat)
 conflict_prefer("here", "here")
 conflict_prefer("filter", "dplyr")
 
-dfm <- read_rds(here("data-intermediate/waves_1-7.rds"))
+dfm <- read_rds(here("data-intermediate/waves_1-8.rds"))
 ```
 
 # Validating
@@ -618,15 +618,14 @@ dfm %>% select(id_pupil, gender_girl, is_intervention2, wave_ind, emo:pro) %>%
 
 Check measurements dependency
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 time_dependency <- function(df, dim, method = "pearson") {
   prefix <- dim
-  dim <- enquo(dim)
   
   df %>% pivot_wider(
     id_cols = c(id_pupil),
     names_from = wave_ind,
-    values_from = !!dim,
+    values_from = {{dim}},
     names_prefix = paste0(str_extract(prefix, "[:alpha:]+"), "_")
   ) %>% select(-id_pupil) %>%
     corrr::correlate(method = method) %>%
@@ -635,11 +634,12 @@ time_dependency <- function(df, dim, method = "pearson") {
 }
 
 map(dfm %>% select(emo:pro) %>% colnames, ~ time_dependency(dfm, ., method = "spearman"))
+
 ```
 
 # Export processed RDS
 
 ```{r}
-dfm %>% write_rds(here("data-processed/waves_1-7_cleaned-plus-IRT.rds"))
+dfm %>% write_rds(here("data-processed/waves_1-8_cleaned-plus-IRT.rds"))
 ```
 
