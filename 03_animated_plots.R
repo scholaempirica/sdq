@@ -155,7 +155,7 @@ names(intervention_labs) = c("control", "experimental")
 
 # group
 sdq_irt_dist_anim_group <- dfm %>%
-  filter(wave_ind %in% 1:3) %>% group_by(wave_ind) %>%
+  filter(wave_ind %in% 1:4) %>% group_by(wave_ind) %>%
   select(id_pupil, gender_girl, is_intervention2, emo:pro) %>%
   pivot_longer(emo:pro) %>%
   ggplot(aes(value, col = is_intervention2)) +
@@ -168,7 +168,7 @@ sdq_irt_dist_anim_group <- dfm %>%
   labs(x = "úroveň dimenze vyjádřená v **měřítku SDQ** *(tj. 0-10 bodů, 5 = průměr)*",
        y = "„relativní četnost“") +
   coord_cartesian(xlim = c(-.3,10.3), expand = FALSE) +
-      labs(tag = "individuální vlna č. {closest_state}\n{paste0(rep('-', 29*progress), collapse = '')}") +
+      labs(tag = "individuální vlna č. {closest_state}\n{paste0(rep('-', 32*progress), collapse = '')}") +
   theme_schola("scatter",
     multiplot = TRUE,
     axis.title.x = ggtext::element_markdown(),

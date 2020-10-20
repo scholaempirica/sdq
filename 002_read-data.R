@@ -1,59 +1,111 @@
 library(tidyverse)
 library(magrittr)
 library(here)
+library(lubridate)
+library(readxl)
 
 
 # 8th wave import ---------------------------------------------------------
 
-wave_8 <- readxl::read_xlsx(here("data-input/SDQ_CKP_leto_2020.xlsx"))
+
+# read separate XLSX files that contains "sablonaNaVyplnovani" in filename
+files <- list.files(here("data-input"), pattern = "sablonaNaVyplnovani.+\\.xlsx$")
+
+xlsx <- map(here("data-input", files), ~ read_xlsx(.x, skip = 2, col_types = c("id_school" = "text")))
+
+# friendly file names
+names(xlsx) <- files %>% str_extract("(?<=.[:space:]..).*(?=\\.xlsx)")
+
+# bind all into bigger df
+from_xlsx <- xlsx %>% bind_rows()
+
+
+from_xlsx %<>% mutate(
+  wave = as.numeric(wave),
+  is_intervention2 = if_else(is_intervention == "1", "experimental", "control") %>% factor(levels = c("control", "experimental")),
+  born_month = parse_number(born_month),
+  born_year = parse_number(born_year),
+  fill_in_month = parse_number(fill_in_month),
+  fill_in_year = parse_number(fill_in_year),
+  gender_girl = parse_integer(gender_girl),
+  id_school = parse_number(id_school),
+  across(starts_with("t"), parse_number)
+)
+
+
+wave_8_summer <- readxl::read_xlsx(here("data-input/SDQ_CKP_leto_2020.xlsx"))
+wave_8_fall <- read_delim("data-input/SDQ_CKP_podzim2019.csv",
+  ";",
+  locale = locale(
+    encoding = "windows-1250"
+  )
+)
 
 # sanify names
-names(wave_8) %<>% map_chr(~ .x %>%
+names(wave_8_summer) %<>% map_chr(~ .x %>%
   if_else(str_detect(., "[\\[\\]]"), str_extract(., "(?<=\\[).*(?=\\])"), .) %>%
   if_else(str_detect(., "\\["), str_extract(., ".*(?=\\[)"), .) %>%
   str_trim())
 
+# rename vars - from old scripts
+
+item_labs <- c(
+  id_school = "Číslo školky (první část trojmístného kódu)",
+  id_teacher = "Číslo učitelky (druhá část trojmístného kódu)",
+  id_or_name = "Číslo dítěte (třetí část trojmístného kódu)",
+  born_month = "Měsíc narození dítěte (číslovkou)",
+  born_year = "Rok narození dítěte",
+  gender_girl = "Pohlaví dítěte",
+  teacher_name = "Vaše příjmení (usnadňuje kontrolu dat)", # JN'S addition
+  id_class = "Název třídy, do které dítě chodí (umožňuje analýzu po skupinách)",
+  tconsid = "Snaží se chovat pěkně k druhým lidem. Bere ohled na jejich pocity",
+  trestles = "Je neklidný/á. Nevydrží dlouho bez hnutí",
+  tsomatic = "Často si stěžuje na bolesti hlavy, žaludku nebo na nevolnost",
+  tshares = "Obvykle se dělí s druhými (o jídlo, hry, psací potřeby aj.)",
+  ttantrum = "Často má záchvaty vzteku nebo výbušnou náladu",
+  tloner = "Je spíše samotář/samotářka. Má sklon hrát si sám/sama",
+  tobeys = "Je celkem poslušný/á. Obvykle dělá, co si dospělí přejí",
+  tworries = "Má hodně starostí, často vypadá ustaraně",
+  tcaring = "Vždy ochotný pomoct, když si někdo ublíží, je zarmoucený nebo mu je zle",
+  tfidgety = "Je neposedný",
+  tfriend = "Má alespoň jednoho dobrého kamaráda nebo kamarádku",
+  tfights = "Často se pere s jinými dětmi nebo je šikanuje",
+  tunhappy = "Je často nešťastný/á, skleslý/á nebo smutný/á",
+  tpopular = "Je vcelku oblíbený/á mezi jinými dětmi",
+  tdistrac = "Snadno se dá vyrušit. Špatně se soustředí",
+  tclingy = "Je nervózní nebo nesamostatný v nových situacích. Snadno ztratí sebedůvěru",
+  tkind = "Je laskavý/á k mladším dětem",
+  tlies = "Často lže nebo podvádí",
+  tbullied = "Jiné děti ho/ji šikanují",
+  thelpout = "Často dobrovolně pomáhá druhým (rodičům, učitelům, jiným dětem)",
+  treflect = "Přemýšlí, než něco udělá",
+  tsteals = "Je zlomyslný/á",
+  toldbest = "Lépe vychází s dospělými než jinými dětmi",
+  tafraid = "Má mnoho strachů. Snadno se poleká",
+  tattends = "Vytrvá u úkolu do konce"
+)
+
+wave_8_summer %<>% rename(all_of(item_labs))
+
+# fall 2019 renames, leaving timestamp alone
+names(wave_8_fall)[-1] <- names(item_labs)
+
+# strip out messed up HMS part...
+wave_8_fall %<>% mutate(`Časová značka` = `Časová značka` %>% str_remove("(?=[:space:]).*") %>% ymd)
+
+# unite classes
+wave_8_fall %<>% mutate(across(c(starts_with("id"), born_month), as.character))
+
+# merge
+wave_8 <- bind_rows(wave_8_summer, wave_8_fall)
+
 # WARNING - hardcoded region from the raw spreadsheets
 wave_8 %<>% add_column(region = "6", id_town = "6", wave = 8, is_intervention2 = 1, .before = 1)
 
-# rename vars - from old scripts
-wave_8 %<>% rename(
-id_school = "Číslo školky (první část trojmístného kódu)",
-id_teacher = "Číslo učitelky (druhá část trojmístného kódu)",
-id_or_name = "Číslo dítěte (třetí část trojmístného kódu)",
-born_month = "Měsíc narození dítěte (číslovkou)",
-born_year = "Rok narození dítěte",
-gender_girl = "Pohlaví dítěte",
-teacher_name = "Vaše příjmení (usnadňuje kontrolu dat)", # JN'S addition
-id_class = "Název třídy, do které dítě chodí (umožňuje analýzu po skupinách)",
-tconsid = "Snaží se chovat pěkně k druhým lidem. Bere ohled na jejich pocity",
-trestles = "Je neklidný/á. Nevydrží dlouho bez hnutí",
-tsomatic = "Často si stěžuje na bolesti hlavy, žaludku nebo na nevolnost",
-tshares = "Obvykle se dělí s druhými (o jídlo, hry, psací potřeby aj.)",
-ttantrum = "Často má záchvaty vzteku nebo výbušnou náladu",
-tloner = "Je spíše samotář/samotářka. Má sklon hrát si sám/sama",
-tobeys = "Je celkem poslušný/á. Obvykle dělá, co si dospělí přejí",
-tworries = "Má hodně starostí, často vypadá ustaraně",
-tcaring = "Vždy ochotný pomoct, když si někdo ublíží, je zarmoucený nebo mu je zle",
-tfidgety = "Je neposedný",
-tfriend = "Má alespoň jednoho dobrého kamaráda nebo kamarádku",
-tfights = "Často se pere s jinými dětmi nebo je šikanuje",
-tunhappy = "Je často nešťastný/á, skleslý/á nebo smutný/á",
-tpopular = "Je vcelku oblíbený/á mezi jinými dětmi",
-tdistrac = "Snadno se dá vyrušit. Špatně se soustředí",
-tclingy = "Je nervózní nebo nesamostatný v nových situacích. Snadno ztratí sebedůvěru",
-tkind = "Je laskavý/á k mladším dětem",
-tlies = "Často lže nebo podvádí",
-tbullied = "Jiné děti ho/ji šikanují",
-thelpout = "Často dobrovolně pomáhá druhým (rodičům, učitelům, jiným dětem)",
-treflect = "Přemýšlí, než něco udělá",
-tsteals = "Je zlomyslný/á",
-toldbest = "Lépe vychází s dospělými než jinými dětmi",
-tafraid = "Má mnoho strachů. Snadno se poleká",
-tattends = "Vytrvá u úkolu do konce")
 
 # derive filled in mont and year from timestamp
-wave_8 %<>% mutate(fill_in_month = lubridate::month(`Časová značka`), fill_in_year = lubridate::year(`Časová značka`))  %>%  select(-`Časová značka`)
+wave_8 %<>% mutate(fill_in_month = lubridate::month(`Časová značka`), fill_in_year = lubridate::year(`Časová značka`)) %>%
+  select(-`Časová značka`)
 
 # gender_girl as integer, born_month as integer
 wave_8 %<>%
@@ -64,8 +116,6 @@ wave_8 %<>%
     born_month = born_month %>% parse_number()
   )
 
-# normalize class names
-wave_8 %<>% mutate(id_class = id_class %>% stringi::stri_trans_general("Latin-ASCII") %>% str_to_lower())
 
 
 # integrify SDQ items
@@ -74,6 +124,12 @@ wave_8 %<>% mutate(across(tconsid:tattends, ~ case_when(
   .x == "Tak trochu pravda" ~ 1,
   .x == "Není pravda" ~ 0
 )))
+
+wave_8 <- bind_rows(wave_8, from_xlsx)
+
+# normalize class names
+wave_8 %<>% mutate(id_class = id_class %>% stringi::stri_trans_general("Latin-ASCII") %>% str_to_lower())
+
 
 # wave_8 %>% glimpse
 
@@ -165,12 +221,6 @@ wave_8$gender_girl = factor(wave_8$gender_girl, labels = c("boys", "girls")) #ch
 
 
 
-wave_8$id_school
-
-
-
-
-
 
 
 
@@ -210,7 +260,7 @@ dfm %<>% mutate_at(vars(temotion, tconduct, thyper, tpeer, tprosoc), parse_doubl
 # dfm %>% glimpse
 
 # write to intermediate data folder in RDS
-dfm %>% write_rds(here("data-intermediate/waves_1-7.rds"))
+# dfm %>% write_rds(here("data-intermediate/waves_1-7.rds"))
 
 # remove dataset from the environment to ensure all
 # subsequent analyses are based on saved RDS file

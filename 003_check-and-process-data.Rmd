@@ -23,7 +23,6 @@ Also, solve the packages namespace conflict problem. Package `conflicted` from *
 ```{r}
 source("shared.R")
 library(assertr)
-library(conflicted)
 library(corrr)
 library(here)
 library(lubridate)
@@ -35,8 +34,8 @@ library(tidyverse)
 library(visdat)
 
 # resolve conflicts
-conflict_prefer("here", "here")
-conflict_prefer("filter", "dplyr")
+filter <- dplyr::filter
+here <- here::here
 
 dfm <- read_rds(here("data-intermediate/waves_1-8.rds"))
 ```
